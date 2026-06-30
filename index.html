@@ -2,32 +2,24 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#1a1a2e">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Бабка на Пушке</title>
-  <!-- Заглушка YaGames до подключения SDK -->
+  <link rel="manifest" href='data:application/manifest+json,{"name":"Бабка на Пушке","short_name":"Бабка","display":"standalone","orientation":"portrait","background_color":"#1a1a2e","theme_color":"#1a1a2e","start_url":".","icons":[{"src":"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect fill='%231a1a2e' width='192' height='192'/%3E%3Ctext x='96' y='120' font-size='90' text-anchor='middle'%3E%F0%9F%91%B5%F0%9F%9A%80%3C/text%3E%3C/svg%3E","sizes":"192x192","type":"image/svg+xml"}]}'>
   <script>
     window.YaGames = window.YaGames || {
       _isStub: true,
-      init() {
-        return Promise.resolve({ adv: this.adv, getPlayer: this.getPlayer });
-      },
-      share(params) {
-        console.log('Share:', params);
-        alert('Поделиться: ' + (params && params.title ? params.title : ''));
-      },
+      init() { return Promise.resolve({ adv: this.adv, getPlayer: this.getPlayer }); },
+      share(p) { alert('Поделиться: ' + (p && p.title ? p.title : '')); },
       adv: {
-        showRewardedVideo() {
-          return new Promise((resolve) => {
-            alert('Реклама просмотрена');
-            resolve();
-          });
-        },
-        showFullscreenAdv() { console.log('Полноэкранная реклама (заглушка)'); }
+        showRewardedVideo() { return new Promise(r => { alert('Реклама просмотрена'); r(); }); },
+        showFullscreenAdv() {}
       },
       getPlayer() {
         return Promise.resolve({
-          setStats(data) { console.log('setStats:', data); },
-          getStats() { return Promise.resolve({ meters: 0 }); }
+          setStats(d) {}, getStats() { return Promise.resolve({ bestTotal: 0, bestDistance: 0 }); }
         });
       }
     };
@@ -37,450 +29,732 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body {
-      width: 100%;
-      height: 100%;
-      overflow: hidden;
-      background: #1a1a2e;
-      touch-action: none;
+      width: 100%; height: 100%; overflow: hidden;
+      background: #1a1a2e; touch-action: none; overscroll-behavior: none;
+      -webkit-touch-callout: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent;
+      padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
     }
-    #game-container {
-      width: 100%;
-      height: 100%;
-      display: flex;
-      justify-content: center;
-      align-items: center;
+    #game-container { width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; }
+    #splash {
+      position: fixed; inset: 0; z-index: 9999; background: linear-gradient(180deg, #1a1a2e 0%, #2d3561 100%);
+      display: flex; flex-direction: column; align-items: center; justify-content: center; transition: opacity 0.4s;
+    }
+    #splash.hide { opacity: 0; pointer-events: none; }
+    #splash h1 { color: #fff; font: bold 28px 'Segoe UI', Arial, sans-serif; margin-bottom: 8px; }
+    #splash p { color: #aaa; font: 16px Arial; margin-bottom: 24px; }
+    #splash-bar { width: 240px; height: 8px; background: #333; border-radius: 4px; overflow: hidden; }
+    #splash-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #2ecc71, #3498db); transition: width 0.2s; }
+    #landscape-blocker {
+      display: none; position: fixed; inset: 0; z-index: 10000; background: #1a1a2e;
+      flex-direction: column; align-items: center; justify-content: center; color: #fff;
+      font: 20px Arial; text-align: center; padding: 24px;
+    }
+    @media (orientation: landscape) and (max-height: 500px) {
+      #landscape-blocker { display: flex; }
+      #game-container, #splash { display: none !important; }
     }
   </style>
 </head>
 <body>
+  <div id="landscape-blocker">
+    <div style="font-size:64px;margin-bottom:16px">📱</div>
+    Поверните телефон — игра работает только в портретной ориентации
+  </div>
+  <div id="splash">
+    <h1>Бабка на Пушке</h1>
+    <p id="splash-text">Загрузка...</p>
+    <div id="splash-bar"><div id="splash-fill"></div></div>
+  </div>
   <div id="game-container"></div>
 
   <script>
-    // Инициализация Яндекс SDK (не блокирует игру)
-    if (window.YaGames && window.YaGames.init) {
-      window.YaGames.init().catch(() => {});
-    }
+    // Блокировка зума
+    document.addEventListener('gesturestart', e => e.preventDefault(), { passive: false });
+    let _lastTap = 0;
+    document.addEventListener('touchend', e => {
+      const now = Date.now();
+      if (now - _lastTap < 300) e.preventDefault();
+      _lastTap = now;
+    }, { passive: false });
 
-    // ============================================================
-    // Звуки-заглушки
-    // ============================================================
+    const splashFill = document.getElementById('splash-fill');
+    const splashText = document.getElementById('splash-text');
+    function setSplash(pct, text) {
+      splashFill.style.width = pct + '%';
+      if (text) splashText.textContent = text;
+    }
+    setSplash(10, 'Подключение SDK...');
+
+    let ysdk = null, yaPlayer = null;
+    YaGames.init().then(s => { ysdk = s; setSplash(20); return s.getPlayer({ scopes: false }); })
+      .then(p => { yaPlayer = p; return p.getStats(['bestTotal', 'bestDistance']); })
+      .then(st => {
+        if (st && st.bestDistance) localStorage.setItem('grannyRecord', String(st.bestDistance));
+      }).catch(() => {});
+
+    setSplash(25, 'Загрузка Phaser...');
+
+    // ================================================================
+    // КОНСТАНТЫ
+    // ================================================================
+    const STORAGE = { RECORD: 'grannyRecord', RUN_COUNT: 'grannyRunCount', TUTORIAL: 'grannyTutorialDone' };
+    const MIN_TOUCH = 48;
+    const COMBO_WINDOW_MS = 1800;
+    const COMBO_MULT = [1, 1.25, 1.5, 2, 3];
+    const MILESTONES = [100, 250, 500, 1000, 2000];
+    const STYLE_PHRASES = [
+      'Бабка-звезда!', 'Внучок, я улетела!', 'Костей не соберёшь!', 'Бабка в шоке!',
+      'Это был полёт!', 'Бабушка — ракета!', 'Ой, спина!', 'Внук, не рассказывай!'
+    ];
+    const PAL = {
+      skyTop: 0x4A90D9, skyBot: 0xB8D4E8, sun: 0xFFE566, sunGlow: 0xFFB347,
+      hillFar: 0x6B9B5E, hillNear: 0x4A7A3D, grass: 0x6BBF4A, dirt: 0x8B6914,
+      woodL: 0xC4956A, woodD: 0x6B4423, metal: 0x7A8490, metalHi: 0xB8C4CE, brass: 0xD4A84B,
+      skin: 0xF5C9A8, skinSh: 0xE0A882, hair: 0xB8B8C0, dress: 0xE85A8A, dressDot: 0xC43D6B,
+      scarf: 0xD93030, legs: 0x7B5EA7, tramp: 0x44DD66, fan: 0x666666,
+      coin: 0xFFD700, coinRim: 0xB8860B
+    };
+    const PHYSICS = {
+      gravity: { x: 0, y: 1.35 },
+      granny: { friction: 0.12, frictionAir: 0.018, restitution: 0.32 },
+      cannon: { chargeMs: 1800, minSpeed: 8, maxSpeed: 28, angleMin: 18, angleMax: 72 },
+      trampoline: { restitution: 1.25, boostVy: -14 },
+      stall: { speedThreshold: 0.35, durationMs: 1200, minAirTimeMs: 400 }
+    };
+    const FONT = {
+      title: { fontFamily: 'Segoe UI, Arial, sans-serif', fontSize: '52px', fontStyle: 'bold', color: '#fff' },
+      hud: { fontFamily: 'Segoe UI, Arial, sans-serif', fontSize: '24px', color: '#fff', stroke: '#2C3E50', strokeThickness: 3 },
+      btn: { fontFamily: 'Segoe UI, Arial, sans-serif', fontSize: '28px', color: '#fff' }
+    };
+
+    // ================================================================
+    // МОБИЛЬНЫЕ УТИЛИТЫ
+    // ================================================================
+    const Mobile = {
+      _insetsPx: { top: 0, right: 0, bottom: 0, left: 0 },
+      init() {
+        const s = getComputedStyle(document.documentElement);
+        this._insetsPx = {
+          top: parseInt(s.getPropertyValue('env(safe-area-inset-top)')) || 0,
+          right: parseInt(s.getPropertyValue('env(safe-area-inset-right)')) || 0,
+          bottom: parseInt(s.getPropertyValue('env(safe-area-inset-bottom)')) || 0,
+          left: parseInt(s.getPropertyValue('env(safe-area-inset-left)')) || 0
+        };
+      },
+      insets(cam) {
+        const sw = cam.width / (window.innerWidth || 720);
+        const sh = cam.height / (window.innerHeight || 1280);
+        return {
+          top: Math.ceil(this._insetsPx.top * sh) + 8,
+          right: Math.ceil(this._insetsPx.right * sw) + 8,
+          bottom: Math.ceil(this._insetsPx.bottom * sh) + 12,
+          left: Math.ceil(this._insetsPx.left * sw) + 8
+        };
+      },
+      touchSize(w, h) { return { w: Math.max(w, MIN_TOUCH), h: Math.max(h, MIN_TOUCH) }; },
+      uiScale(w, h) {
+        const a = w / h, da = 720 / 1280;
+        return a < da ? 1 : Math.min(1.15, a / da + 0.05);
+      },
+      vibrate(p) { try { if (navigator.vibrate) navigator.vibrate(p); } catch (e) {} }
+    };
+    Mobile.init();
+
+    // ================================================================
+    // ЗВУК (Web Audio)
+    // ================================================================
     const SoundFX = {
-      _ctx: null,
-      _getCtx() {
+      _ctx: null, _master: null,
+      _ensure() {
         if (!this._ctx) {
           try {
             this._ctx = new (window.AudioContext || window.webkitAudioContext)();
-          } catch (e) { /* без звука */ }
+            this._master = this._ctx.createGain();
+            this._master.gain.value = 0.35;
+            this._master.connect(this._ctx.destination);
+          } catch (e) {}
         }
+        if (this._ctx && this._ctx.state === 'suspended') this._ctx.resume();
         return this._ctx;
       },
-      _beep(freq, duration) {
-        const ctx = this._getCtx();
-        if (!ctx) return;
-        try {
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc.connect(gain);
-          gain.connect(ctx.destination);
-          osc.frequency.value = freq;
-          gain.gain.value = 0.1;
-          osc.start();
-          osc.stop(ctx.currentTime + duration);
-        } catch (e) { /* ignore */ }
+      _tone(freq, dur, type = 'sine', vol = 0.2, slide = null) {
+        const ctx = this._ensure(); if (!ctx) return;
+        const o = ctx.createOscillator(), g = ctx.createGain();
+        o.type = type; o.frequency.setValueAtTime(freq, ctx.currentTime);
+        if (slide) o.frequency.exponentialRampToValueAtTime(slide, ctx.currentTime + dur);
+        g.gain.setValueAtTime(vol, ctx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
+        o.connect(g).connect(this._master); o.start(); o.stop(ctx.currentTime + dur);
       },
-      shoot() { console.log('ЗДЕСЬ БУДЕТ ЗВУК: выстрел'); this._beep(200, 0.15); },
-      fart()  { console.log('ЗДЕСЬ БУДЕТ ЗВУК: пердёж'); this._beep(80, 0.2); },
-      coin()  { console.log('ЗДЕСЬ БУДЕТ ЗВУК: монета'); this._beep(880, 0.1); }
+      _noise(dur) {
+        const ctx = this._ensure(); if (!ctx) return;
+        const buf = ctx.createBuffer(1, ctx.sampleRate * dur, ctx.sampleRate);
+        const d = buf.getChannelData(0);
+        for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+        const src = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain();
+        src.buffer = buf; f.type = 'lowpass'; f.frequency.value = 400;
+        g.gain.setValueAtTime(0.25, ctx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
+        src.connect(f).connect(g).connect(this._master); src.start();
+      },
+      shoot() { this._tone(180, 0.1, 'sawtooth', 0.25, 60); this._noise(0.1); Mobile.vibrate([30]); },
+      fart()  { this._tone(90, 0.25, 'sawtooth', 0.3, 45); this._noise(0.3); Mobile.vibrate([40, 20, 60]); },
+      coin()  { this._tone(880, 0.06, 'sine', 0.15); setTimeout(() => this._tone(1320, 0.08, 'sine', 0.12), 50); Mobile.vibrate([15, 30, 15]); },
+      bounce(i = 1) { this._tone(120 * i, 0.1, 'triangle', 0.18, 80); },
+      milestone() { this._tone(523, 0.1, 'sine', 0.2); setTimeout(() => this._tone(659, 0.1, 'sine', 0.2), 100); setTimeout(() => this._tone(784, 0.15, 'sine', 0.2), 200); }
     };
 
-    // ============================================================
-    // Глобальные утилиты
-    // ============================================================
-    const STORAGE = {
-      RECORD: 'grannyRecord',
-      RUN_COUNT: 'grannyRunCount'
+    // ================================================================
+    // ВИЗУАЛЬНАЯ ФАБРИКА (процедурная 2D графика)
+    // ================================================================
+    const VF = {
+      drawSky(scene, w, h, groundY) {
+        const g = scene.add.graphics().setDepth(0);
+        g.fillGradientStyle(PAL.skyTop, PAL.skyTop, PAL.skyBot, PAL.skyBot, 1);
+        g.fillRect(0, 0, w, groundY);
+        return g;
+      },
+      drawSun(scene, x, y) {
+        const c = scene.add.container(x, y).setDepth(1).setScrollFactor(0.1);
+        const g = scene.add.graphics();
+        g.fillStyle(PAL.sunGlow, 0.25); g.fillCircle(0, 0, 90);
+        g.fillStyle(PAL.sunGlow, 0.45); g.fillCircle(0, 0, 60);
+        g.fillStyle(PAL.sun, 1); g.fillCircle(0, 0, 35);
+        for (let i = 0; i < 8; i++) {
+          const a = (i / 8) * Math.PI * 2;
+          g.lineStyle(3, PAL.sunGlow, 0.25);
+          g.lineBetween(Math.cos(a) * 50, Math.sin(a) * 50, Math.cos(a) * 75, Math.sin(a) * 75);
+        }
+        c.add(g);
+        scene.tweens.add({ targets: c, angle: 360, duration: 120000, repeat: -1 });
+        return c;
+      },
+      drawHills(scene, w, groundY, color, depth, scroll) {
+        const c = scene.add.container(0, 0).setDepth(depth).setScrollFactor(scroll);
+        const g = scene.add.graphics();
+        g.fillStyle(color, 1);
+        for (let x = 0; x < w + 400; x += 200) {
+          const h = 80 + Math.sin(x * 0.008) * 40 + Math.cos(x * 0.003) * 30;
+          g.fillTriangle(x, groundY, x + 100, groundY - h, x + 200, groundY);
+        }
+        c.add(g);
+        return c;
+      },
+      drawCloud(scene, x, y, scale, depth, scroll) {
+        const c = scene.add.container(x, y).setDepth(depth).setScrollFactor(scroll);
+        const g = scene.add.graphics();
+        g.fillStyle(0xffffff, 0.9);
+        [[0,0,40],[30,-10,30],[-25,-5,28],[15,8,25],[-10,10,22]].forEach(([cx,cy,r]) => g.fillEllipse(cx*scale, cy*scale, r*scale, r*0.6*scale));
+        g.fillStyle(0xD0E4F0, 0.5);
+        g.fillEllipse(5*scale, 8*scale, 35*scale, 18*scale);
+        c.add(g);
+        scene.tweens.add({ targets: c, x: x + 30, duration: 8000 + Math.random()*4000, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+        return c;
+      },
+      drawGround(scene, w, groundY) {
+        const g = scene.add.graphics().setDepth(10);
+        g.fillStyle(PAL.dirt, 1);
+        g.fillRect(0, groundY - 15, w, 55);
+        g.fillStyle(PAL.grass, 1);
+        g.fillRect(0, groundY - 18, w, 8);
+        for (let x = 0; x < w; x += 12) {
+          const bh = 6 + Math.sin(x * 0.1) * 4;
+          g.lineStyle(2, 0x3D7A2E, 0.7);
+          g.lineBetween(x, groundY - 18, x + 3, groundY - 18 - bh);
+        }
+        return g;
+      },
+      drawCannon(scene, px, py) {
+        const c = scene.add.container(px, py).setDepth(22);
+        const g = scene.add.graphics();
+        // Колёса
+        [[-15, 15, 14], [25, 15, 14]].forEach(([wx, wy, r]) => {
+          g.fillStyle(0x333333, 1); g.fillCircle(wx, wy, r);
+          g.lineStyle(2, 0x555555); g.strokeCircle(wx, wy, r);
+          for (let i = 0; i < 4; i++) {
+            const a = i * Math.PI / 2;
+            g.lineBetween(wx, wy, wx + Math.cos(a) * (r - 3), wy + Math.sin(a) * (r - 3));
+          }
+        });
+        // Лафет
+        g.fillStyle(PAL.woodD, 1); g.fillRoundedRect(-20, -10, 55, 25, 4);
+        g.fillStyle(PAL.woodL, 1); g.fillRoundedRect(-18, -12, 50, 20, 3);
+        for (let i = 0; i < 3; i++) { g.lineStyle(1, PAL.woodD, 0.5); g.lineBetween(-15, -8 + i * 6, 28, -8 + i * 6); }
+        // Ствол
+        g.fillStyle(PAL.metal, 1); g.fillRect(5, -75, 22, 65);
+        g.fillStyle(PAL.metalHi, 0.6); g.fillRect(8, -72, 5, 58);
+        g.fillStyle(PAL.brass, 1); g.fillCircle(16, -75, 14);
+        g.lineStyle(2, 0x4A5058); g.strokeCircle(16, -75, 12);
+        g.fillStyle(0x222222, 1); g.fillCircle(16, -75, 6);
+        c.add(g);
+        c.setData('pivot', { x: 0, y: 10 });
+        return c;
+      },
+      drawGrannyHead(scene) {
+        const c = scene.add.container(0, 0).setDepth(32);
+        const g = scene.add.graphics();
+        g.fillStyle(PAL.hair, 1); g.fillCircle(0, -4, 20);
+        g.fillStyle(PAL.skin, 1); g.fillCircle(0, 0, 18);
+        g.fillStyle(PAL.skinSh, 0.4); g.fillCircle(-8, 4, 5); g.fillCircle(8, 4, 5);
+        g.lineStyle(1, PAL.skinSh, 0.6);
+        g.lineBetween(-6, -2, -3, -4); g.lineBetween(6, -2, 3, -4); g.lineBetween(-4, 6, 4, 6);
+        g.fillStyle(0xffffff, 1); g.fillCircle(-6, -2, 5); g.fillCircle(6, -2, 5);
+        g.fillStyle(0x222222, 1); g.fillCircle(-5, -2, 2.5); g.fillCircle(7, -2, 2.5);
+        g.fillStyle(0xffffff, 1); g.fillCircle(-4, -3, 1); g.fillCircle(8, -3, 1);
+        g.lineStyle(2, 0x333333); g.strokeCircle(-6, -2, 7); g.strokeCircle(6, -2, 7);
+        g.lineBetween(-1, -2, 1, -2);
+        g.lineStyle(2, 0x884444); g.beginPath(); g.arc(0, 5, 5, 0.2, Math.PI - 0.2); g.strokePath();
+        c.add(g);
+        return c;
+      },
+      drawGrannyBody(scene) {
+        const c = scene.add.container(0, 0).setDepth(31);
+        const g = scene.add.graphics();
+        g.fillStyle(PAL.dress, 1); g.fillRoundedRect(-14, -20, 28, 42, 6);
+        for (let i = 0; i < 4; i++) g.fillStyle(PAL.dressDot, 0.7).fillCircle(-6 + i * 5, -5 + (i % 2) * 10, 3);
+        g.fillStyle(PAL.scarf, 1);
+        g.fillTriangle(-12, -20, 12, -20, 0, -8);
+        g.fillStyle(0xffffff, 0.8); g.fillRect(-10, -18, 20, 3);
+        c.add(g);
+        return c;
+      },
+      drawGrannyLegs(scene) {
+        const c = scene.add.container(0, 0).setDepth(30);
+        const g = scene.add.graphics();
+        g.fillStyle(PAL.legs, 1); g.fillRoundedRect(-16, -14, 14, 28, 3); g.fillRoundedRect(2, -14, 14, 28, 3);
+        g.fillStyle(0x333333, 1); g.fillRoundedRect(-17, 10, 16, 8, 2); g.fillRoundedRect(1, 10, 16, 8, 2);
+        c.add(g);
+        return c;
+      },
+      drawTrampoline(scene, x, y) {
+        const c = scene.add.container(x, y).setDepth(20);
+        const g = scene.add.graphics();
+        g.fillStyle(0x555555, 1); g.fillRect(-45, 8, 90, 6);
+        for (let i = -3; i <= 3; i++) {
+          g.lineStyle(2, 0xAAAAAA); let sx = i * 12;
+          g.beginPath(); g.moveTo(sx, 8);
+          for (let j = 0; j < 4; j++) g.lineTo(sx + (j % 2 ? 3 : -3), 8 - j * 5);
+          g.strokePath();
+        }
+        g.fillStyle(PAL.tramp, 1); g.fillRoundedRect(-40, -2, 80, 12, 3);
+        g.lineStyle(1, 0x33aa44, 0.5);
+        for (let i = -35; i < 35; i += 10) { g.lineBetween(i, 0, i + 10, 8); g.lineBetween(i + 10, 0, i, 8); }
+        c.add(g);
+        return c;
+      },
+      drawFan(scene, x, y) {
+        const c = scene.add.container(x, y).setDepth(20);
+        const body = scene.add.graphics();
+        body.fillStyle(PAL.fan, 1); body.fillRoundedRect(-25, -25, 50, 50, 6);
+        body.fillStyle(0x444444, 1); body.fillCircle(0, 0, 8);
+        c.add(body);
+        const blades = scene.add.graphics();
+        blades.fillStyle(0xCCCCCC, 0.9);
+        for (let i = 0; i < 4; i++) {
+          const a = i * Math.PI / 2;
+          blades.fillEllipse(Math.cos(a) * 14, Math.sin(a) * 14, 22, 8);
+        }
+        c.add(blades);
+        c.setData('blades', blades);
+        return c;
+      },
+      drawCrow(scene, x, y) {
+        const c = scene.add.container(x, y).setDepth(20);
+        const g = scene.add.graphics();
+        g.fillStyle(0x1A1A1A, 1); g.fillEllipse(0, 0, 28, 18);
+        g.fillCircle(12, -8, 10);
+        g.fillStyle(0xF5A623, 1); g.fillTriangle(20, -8, 28, -6, 20, -4);
+        g.fillStyle(0x333333, 0.8);
+        g.fillTriangle(-8, -2, -22, -12, -18, 4);
+        g.fillTriangle(8, -2, 22, -12, 18, 4);
+        c.add(g);
+        return c;
+      },
+      drawCoin(scene, x, y) {
+        const c = scene.add.container(x, y).setDepth(20);
+        const g = scene.add.graphics();
+        g.fillStyle(PAL.coinRim, 1); g.fillCircle(0, 0, 12);
+        g.fillStyle(PAL.coin, 1); g.fillCircle(0, 0, 10);
+        g.fillStyle(0xFFF8DC, 0.6); g.fillEllipse(-3, -3, 6, 4);
+        g.lineStyle(1.5, PAL.coinRim); g.strokeCircle(0, 0, 10);
+        g.lineStyle(2, PAL.coinRim, 0.8);
+        g.lineBetween(-2, -4, -2, 4); g.lineBetween(-2, 0, 2, 0); g.lineBetween(2, -3, 2, 3);
+        c.add(g);
+        scene.tweens.add({ targets: c, y: y - 6, duration: 700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+        return c;
+      },
+      drawPanel(scene, x, y, w, h, depth = 100) {
+        const g = scene.add.graphics().setScrollFactor(0).setDepth(depth);
+        g.fillStyle(0x000000, 0.2); g.fillRoundedRect(x - w/2 + 4, y - h/2 + 4, w, h, 14);
+        g.fillStyle(0xffffff, 0.92); g.fillRoundedRect(x - w/2, y - h/2, w, h, 14);
+        g.lineStyle(2, 0xE8E8E8, 1); g.strokeRoundedRect(x - w/2, y - h/2, w, h, 14);
+        return g;
+      },
+      drawButton(scene, x, y, w, h, color, label, depth, callback) {
+        const sz = Mobile.touchSize(w, h);
+        const c = scene.add.container(x, y).setScrollFactor(0).setDepth(depth);
+        const bg = scene.add.graphics();
+        const draw = (col, sc) => {
+          bg.clear();
+          bg.fillStyle(0x000000, 0.2); bg.fillRoundedRect(-sz.w/2+3, -sz.h/2+3, sz.w, sz.h, 12);
+          bg.fillStyle(col, 1); bg.fillRoundedRect(-sz.w/2, -sz.h/2, sz.w, sz.h, 12);
+        };
+        draw(color, 1);
+        const txt = scene.add.text(0, 0, label, FONT.btn).setOrigin(0.5);
+        c.add([bg, txt]);
+        c.setSize(sz.w, sz.h).setInteractive(new Phaser.Geom.Rectangle(-sz.w/2, -sz.h/2, sz.w, sz.h), Phaser.Geom.Rectangle.Contains);
+        c.on('pointerover', () => { draw(color, 0.85); scene.tweens.add({ targets: c, scale: 1.04, duration: 80 }); });
+        c.on('pointerout', () => { draw(color, 1); c.setScale(1); });
+        c.on('pointerdown', () => { c.setScale(0.96); callback(); });
+        c.on('pointerup', () => c.setScale(1));
+        return c;
+      },
+      createParticleTex(scene) {
+        ['dust', 'sparkle', 'smoke'].forEach(name => {
+          if (scene.textures.exists(name)) return;
+          const s = name === 'smoke' ? 8 : 4;
+          const c = scene.textures.createCanvas(name, s, s);
+          const ctx = c.getContext();
+          if (name === 'smoke') {
+            const gr = ctx.createRadialGradient(s/2,s/2,0,s/2,s/2,s/2);
+            gr.addColorStop(0, 'rgba(200,255,200,0.8)'); gr.addColorStop(1, 'rgba(200,255,200,0)');
+            ctx.fillStyle = gr; ctx.fillRect(0,0,s,s);
+          } else {
+            ctx.fillStyle = name === 'sparkle' ? '#FFFFAA' : '#C4A574';
+            ctx.fillRect(0, 0, s, s);
+          }
+          c.refresh();
+        });
+      },
+      burst(scene, x, y, tex, cfg) {
+        const em = scene.add.particles(x, y, tex, { ...cfg, emitting: false });
+        em.explode(cfg.quantity || 10);
+        scene.time.delayedCall((cfg.lifespan || 500) + 100, () => em.destroy());
+      }
     };
 
-    const STYLE_PHRASES = [
-      'Бабка-звезда!',
-      'Внучок, я улетела!',
-      'Костей не соберёшь!',
-      'Бабка в шоке!',
-      'Это был полёт!',
-      'Бабушка — ракета!',
-      'Ой, спина!',
-      'Внук, не рассказывай!'
-    ];
-
-    /** Проверка: тело принадлежит бабке */
-    function isGrannyPart(body) {
-      return body && body.label && body.label.startsWith('granny');
+    // ================================================================
+    // УТИЛИТЫ
+    // ================================================================
+    function isGrannyPart(b) { return b && b.label && b.label.startsWith('granny'); }
+    function getGrannyBodies(g) { return g ? [g.head, g.body, g.legs] : []; }
+    function applyImpulseToGranny(scene, g, fx, fy) {
+      getGrannyBodies(g).forEach(b => scene.matter.body.applyForce(b, b.position, { x: fx, y: fy }));
+    }
+    function setGrannyVelocity(scene, g, vx, vy) {
+      getGrannyBodies(g).forEach(b => scene.matter.body.setVelocity(b, { x: vx, y: vy }));
+    }
+    async function saveYaStats(data) {
+      if (!yaPlayer) return;
+      try {
+        const p = await yaPlayer.getStats(['bestTotal', 'bestDistance']);
+        await yaPlayer.setStats({
+          bestTotal: Math.max(p.bestTotal || 0, data.bestTotal || 0),
+          bestDistance: Math.max(p.bestDistance || 0, data.bestDistance || 0)
+        });
+      } catch (e) {}
+    }
+    function shareRecord(d) {
+      try { YaGames.share({ title: `Я запустил бабку на ${d} м!`, text: 'Побей мой рекорд!', url: location.href }); } catch (e) {}
+    }
+    function showRewarded(scene) {
+      if (scene._rewardClaimed) return;
+      const p = ysdk?.adv?.showRewardedVideo ? ysdk.adv.showRewardedVideo() : Promise.resolve();
+      p.then(() => {
+        scene._rewardClaimed = true;
+        scene.totalCoins *= 2;
+        scene._lastTotal = scene.bestDistance + scene.totalCoins;
+        if (scene._resultUI?.info) scene._resultUI.info.setText(
+          `Дальность: ${scene.bestDistance} м\nМонеты: ${scene.totalCoins}\nВсего: ${scene._lastTotal}`
+        );
+      }).catch(() => {});
     }
 
-    /** Получить все Matter-тела бабки */
-    function getGrannyBodies(granny) {
-      if (!granny) return [];
-      return [granny.head, granny.body, granny.legs];
-    }
-
-    /** Применить импульс ко всем частям бабки */
-    function applyImpulseToGranny(scene, granny, fx, fy) {
-      getGrannyBodies(granny).forEach((b) => {
-        scene.matter.body.applyForce(b, b.position, { x: fx, y: fy });
-      });
-    }
-
-    /** Установить скорость всем частям бабки */
-    function setGrannyVelocity(scene, granny, vx, vy) {
-      getGrannyBodies(granny).forEach((b) => {
-        scene.matter.body.setVelocity(b, { x: vx, y: vy });
-      });
-    }
-
-    // ============================================================
-    // BootScene — мгновенный переход в меню
-    // ============================================================
+    // ================================================================
+    // BootScene
+    // ================================================================
     class BootScene extends Phaser.Scene {
       constructor() { super('BootScene'); }
-
-      preload() {
-        // Внешних ассетов нет — загрузка не нужна
-      }
-
+      preload() { setSplash(50, 'Инициализация...'); }
       create() {
-        this.scene.start('MenuScene');
-      }
-    }
-
-    // ============================================================
-    // MenuScene — главное меню
-    // ============================================================
-    class MenuScene extends Phaser.Scene {
-      constructor() { super('MenuScene'); }
-
-      create() {
-        const { width, height } = this.cameras.main;
-
-        // Фон
-        this.add.rectangle(width / 2, height / 2, width, height, 0x1a1a2e);
-
-        // Заголовок
-        this.add.text(width / 2, 200, 'Бабка на Пушке', {
-          fontFamily: 'Arial',
-          fontSize: '60px',
-          color: '#ffffff',
-          align: 'center'
-        }).setOrigin(0.5);
-
-        // Рекорд из localStorage
-        const record = parseInt(localStorage.getItem(STORAGE.RECORD) || '0', 10);
-        this.add.text(width / 2, 320, `Лучший рекорд: ${record} м`, {
-          fontFamily: 'Arial',
-          fontSize: '32px',
-          color: '#cccccc'
-        }).setOrigin(0.5);
-
-        // Кнопка «ИГРАТЬ»
-        this._createButton(width / 2, height / 2, 280, 80, 0x44aa44, 'ИГРАТЬ', () => {
-          this.scene.start('GameScene');
+        setSplash(90, 'Поехали!');
+        VF.createParticleTex(this);
+        this.time.delayedCall(300, () => {
+          setSplash(100);
+          document.getElementById('splash').classList.add('hide');
+          this.scene.start('MenuScene');
         });
       }
+    }
 
-      /** Создать интерактивную кнопку */
-      _createButton(x, y, w, h, color, label, callback) {
-        const btn = this.add.rectangle(x, y, w, h, color).setInteractive({ useHandCursor: true });
-        const txt = this.add.text(x, y, label, {
-          fontFamily: 'Arial',
-          fontSize: '36px',
-          color: '#ffffff'
-        }).setOrigin(0.5);
+    // ================================================================
+    // MenuScene
+    // ================================================================
+    class MenuScene extends Phaser.Scene {
+      constructor() { super('MenuScene'); }
+      create() {
+        const { width, height } = this.cameras.main;
+        const ins = Mobile.insets(this.cameras.main);
+        const us = Mobile.uiScale(width, height);
 
-        btn.on('pointerover', () => btn.setFillStyle(color, 0.85));
-        btn.on('pointerout', () => btn.setFillStyle(color, 1));
-        btn.on('pointerdown', callback);
-        return { btn, txt };
+        VF.drawSky(this, width, height, height);
+        VF.drawHills(this, width + 200, height, PAL.hillFar, 2, 0.15);
+        VF.drawHills(this, width + 200, height, PAL.hillNear, 3, 0.25);
+        for (let i = 0; i < 5; i++) VF.drawCloud(this, 80 + i * 140, 80 + (i % 3) * 40, 1 + i * 0.1, 2, 0.1);
+        VF.drawSun(this, width - 80, 100);
+
+        const titleSh = this.add.text(width/2 + 2, ins.top + 90*us + 2, 'Бабка на Пушке', { ...FONT.title, fontSize: Math.round(52*us)+'px', color: '#3498DB' }).setOrigin(0.5).setScrollFactor(0);
+        const title = this.add.text(width/2, ins.top + 90*us, 'Бабка на Пушке', { ...FONT.title, fontSize: Math.round(52*us)+'px' }).setOrigin(0.5).setScrollFactor(0);
+        this.tweens.add({ targets: title, y: title.y - 8, duration: 2000, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+        titleSh.y = title.y + 2;
+
+        const record = parseInt(localStorage.getItem(STORAGE.RECORD) || '0', 10);
+        VF.drawPanel(this, width/2, ins.top + 175*us, 340, 50, 5);
+        this.add.text(width/2, ins.top + 175*us, `🏆 Рекорд: ${record} м`, {
+          fontFamily: 'Segoe UI, Arial', fontSize: Math.round(24*us)+'px', color: '#2C3E50'
+        }).setOrigin(0.5).setScrollFactor(0);
+
+        // Демо-анимация
+        const demoC = VF.drawCannon(this, width * 0.28, height * 0.72);
+        demoC.setScrollFactor(0);
+        const demoG = VF.drawGrannyHead(this);
+        demoG.setPosition(width * 0.28, height * 0.58).setScrollFactor(0);
+        this.tweens.add({ targets: demoC, angle: { from: -20, to: -55 }, duration: 1400, yoyo: true, repeat: -1 });
+        this.tweens.add({
+          targets: demoG, x: width * 0.72, y: height * 0.45, angle: 720, duration: 2000,
+          repeat: -1, onRepeat: () => demoG.setPosition(width * 0.28, height * 0.58).setAngle(0)
+        });
+
+        VF.drawButton(this, width/2, height - ins.bottom - 160*us, 300, 72, 0x2ECC71, '▶  ИГРАТЬ', 10, () => {
+          this.scene.start('GameScene');
+        });
+
+        this.add.text(width/2, height - ins.bottom - 60, 'Удерживай → целься → отпусти', {
+          fontFamily: 'Arial', fontSize: Math.round(18*us)+'px', color: '#aaa'
+        }).setOrigin(0.5).setScrollFactor(0);
+
+        const runs = parseInt(localStorage.getItem(STORAGE.RUN_COUNT) || '0', 10);
+        if (runs >= 2 && (runs - 2) % 4 === 0 && ysdk?.adv?.showFullscreenAdv) {
+          ysdk.adv.showFullscreenAdv({ callbacks: { onClose: () => {} } });
+        }
       }
     }
 
-    // ============================================================
-    // GameScene — основной геймплей
-    // ============================================================
+    // ================================================================
+    // GameScene
+    // ================================================================
     class GameScene extends Phaser.Scene {
       constructor() { super('GameScene'); }
 
       create() {
-        // --- Состояние забега ---
         this.granny = null;
-        this.isCharging = false;
-        this.isFlying = false;
-        this.isGameOver = false;
-        this.chargeStartTime = 0;
-        this.chargeProgress = 0;
-        this.cannonAngleDeg = 45;
-        this.totalCoins = 0;
-        this.bestDistance = 0;
-        this.fartUsed = false;
-        this.groundTouched = false;
-        this.stallTimer = 0;
-        this.worldObjects = [];
-        this.crows = [];
+        this.isCharging = false; this.isFlying = false; this.isGameOver = false;
+        this.chargeStartTime = 0; this.chargeProgress = 0; this.cannonAngleDeg = 45;
+        this.totalCoins = 0; this.bestDistance = 0; this.fartUsed = false;
+        this.groundTouched = false; this.stallTimer = 0; this.worldObjects = []; this.crows = [];
+        this._hitCooldown = new Map(); this.coinCombo = 0; this.lastCoinTime = 0;
+        this.milestoneShown = new Set(); this._rewardClaimed = false; this._lastDrawnProgress = -1;
+        this.tutorialActive = false; this.tutorialStep = 0;
 
-        // Размер мира
-        this.worldWidth = 8000;
-        this.worldHeight = 1280;
+        this.worldWidth = 8000; this.worldHeight = 1280;
+        this.groundY = 1240; this.cannonX = 150; this.cannonY = 1140;
+        this.insets = Mobile.insets(this.cameras.main);
 
-        // Небо
-        this.add.rectangle(this.worldWidth / 2, this.worldHeight / 2, this.worldWidth, this.worldHeight, 0x87ceeb);
+        VF.drawSky(this, this.worldWidth, this.groundY, this.groundY);
+        VF.drawSun(this, 500, 180);
+        VF.drawHills(this, this.worldWidth, this.groundY, PAL.hillFar, 2, 0.1);
+        VF.drawHills(this, this.worldWidth, this.groundY, PAL.hillNear, 3, 0.2);
+        for (let i = 0; i < 30; i++) VF.drawCloud(this, 200 + i * 280, 60 + (i % 5) * 50, 0.8 + (i % 3) * 0.2, 2, 0.1 + (i % 2) * 0.1);
 
-        // Земля — статичный Matter-прямоугольник
-        const groundY = 1240;
-        const groundH = 40;
-        this.matter.add.rectangle(this.worldWidth / 2, groundY, this.worldWidth, groundH, {
-          isStatic: true,
-          label: 'ground',
-          friction: 0.8
+        this.matter.add.rectangle(this.worldWidth/2, this.groundY, this.worldWidth, 40, {
+          isStatic: true, label: 'ground', friction: 0.95, restitution: 0.05
         });
-        this.add.rectangle(this.worldWidth / 2, groundY, this.worldWidth, groundH, 0x5a8f3a);
+        VF.drawGround(this, this.worldWidth, this.groundY);
 
-        // Пушка
-        this.cannonX = 150;
-        this.cannonY = 1140;
-        this.cannon = this.add.rectangle(this.cannonX, this.cannonY, 50, 100, 0x8B4513);
-        this.cannon.setOrigin(0.2, 0.85);
-        this.cannon.setRotation(Phaser.Math.DegToRad(-this.cannonAngleDeg));
+        this.cannon = VF.drawCannon(this, this.cannonX, this.cannonY);
+        this.forceBar = this.add.graphics().setDepth(110).setVisible(false);
+        this.trajectoryDots = [];
+        for (let i = 0; i < 14; i++) {
+          this.trajectoryDots.push(this.add.circle(0, 0, 5 - i * 0.2, 0xffffff, 0.08 + i * 0.04).setDepth(15).setVisible(false));
+        }
 
-        // Полоска силы
-        this.forceBar = this.add.graphics();
-        this.forceBar.setVisible(false);
-
-        // Генерация мира
         this.generateWorld();
-
-        // Камера
         this.cameras.main.setBounds(0, 0, this.worldWidth, this.worldHeight);
-        this.cameras.main.setScroll(0, 0);
-
-        // UI (фиксирован к камере)
         this._createHUD();
 
-        // Кнопка «Пёрнуть»
-        this.fartBtn = this.add.rectangle(620, 1180, 160, 60, 0xaa44aa)
-          .setScrollFactor(0)
-          .setInteractive()
-          .setVisible(false);
-        this.fartBtnText = this.add.text(620, 1180, 'Пёрнуть', {
-          fontFamily: 'Arial', fontSize: '24px', color: '#fff'
-        }).setOrigin(0.5).setScrollFactor(0).setVisible(false);
+        const fbSz = Mobile.touchSize(160, 64);
+        this.fartBtn = VF.drawButton(this, 720 - this.insets.right - 90, 1280 - this.insets.bottom - 56,
+          fbSz.w, fbSz.h, 0x9B59B6, '💨 Пёрнуть', 120, () => this._doFart());
+        this.fartBtn.setVisible(false);
 
-        this.fartBtn.on('pointerdown', () => this._doFart());
-
-        // Управление
         this.input.on('pointerdown', this._onPointerDown, this);
         this.input.on('pointermove', this._onPointerMove, this);
-        this.input.on('pointerup',   this._onPointerUp,   this);
-
-        // Столкновения
+        this.input.on('pointerup', this._onPointerUp, this);
         this.matter.world.on('collisionstart', this._onCollisionStart, this);
 
-        // Счётчик забегов для рекламы
         this._incrementRunCount();
+        this._showTutorialIfNeeded();
       }
 
-      /** HUD: монеты и дальность */
       _createHUD() {
-        this.hudCoins = this.add.text(20, 20, 'Монеты: 0', {
-          fontFamily: 'Arial', fontSize: '28px', color: '#ffffff',
-          stroke: '#000', strokeThickness: 4
-        }).setScrollFactor(0).setDepth(100);
-
-        this.hudDistance = this.add.text(20, 60, 'Дальность: 0 м', {
-          fontFamily: 'Arial', fontSize: '28px', color: '#ffffff',
-          stroke: '#000', strokeThickness: 4
-        }).setScrollFactor(0).setDepth(100);
+        const ins = this.insets;
+        VF.drawPanel(this, ins.left + 110, ins.top + 42, 210, 76, 100);
+        this.hudCoins = this.add.text(ins.left + 20, ins.top + 18, '🪙 0', { ...FONT.hud }).setScrollFactor(0).setDepth(101);
+        this.hudDistance = this.add.text(ins.left + 20, ins.top + 52, '📏 0 м', { ...FONT.hud }).setScrollFactor(0).setDepth(101);
+        this.hudCombo = this.add.text(360, ins.top + 30, '', {
+          fontFamily: 'Arial', fontSize: '28px', color: '#FFD700', stroke: '#000', strokeThickness: 4
+        }).setOrigin(0.5).setScrollFactor(0).setDepth(101);
       }
 
       _updateHUD() {
         let dist = 0;
-        if (this.granny && this.granny.body) {
-          dist = Math.max(0, (this.granny.body.position.x - 150) / 10);
-        }
-        this.hudDistance.setText(`Дальность: ${Math.floor(dist)} м`);
-        this.hudCoins.setText(`Монеты: ${this.totalCoins}`);
+        if (this.granny?.body) dist = Math.max(0, (this.granny.body.position.x - 150) / 10);
+        this.hudDistance.setText(`📏 ${Math.floor(dist)} м`);
+        this.hudCoins.setText(`🪙 ${this.totalCoins}`);
+        this._checkMilestones(dist);
       }
 
-      // ----------------------------------------------------------
-      // Генерация мира
-      // ----------------------------------------------------------
+      _checkMilestones(dist) {
+        for (const m of MILESTONES) {
+          if (dist >= m && !this.milestoneShown.has(m)) {
+            this.milestoneShown.add(m);
+            const bonus = Math.floor(m * 0.1);
+            this.totalCoins += bonus;
+            this._floatText(this.granny.body.position.x, this.granny.body.position.y - 80, `${m} м! +${bonus}`, '#44ff44');
+            SoundFX.milestone();
+          }
+        }
+      }
+
+      _floatText(x, y, text, color) {
+        const t = this.add.text(x, y, text, { fontFamily: 'Arial', fontSize: '26px', color, stroke: '#000', strokeThickness: 3 }).setOrigin(0.5).setDepth(50);
+        this.tweens.add({ targets: t, y: y - 60, alpha: 0, duration: 800, onComplete: () => t.destroy() });
+      }
+
+      _registerHit(id, ms = 300) { this._hitCooldown.set(id, this.time.now + ms); }
+      _hasHit(id) { const t = this._hitCooldown.get(id); return t && this.time.now < t; }
+
+      _feedbackHit(shake = 4, slowMo = 0) {
+        this.cameras.main.shake(120, shake / 1000);
+        if (slowMo > 0) {
+          this.time.timeScale = slowMo;
+          this.time.delayedCall(150, () => { this.time.timeScale = 1; });
+        }
+      }
+
       generateWorld() {
         let x = 600;
+        const weights = [
+          { fn: '_createTrampoline', w: 20 }, { fn: '_createFan', w: 18 },
+          { fn: '_createCrow', w: 14 }, { fn: '_createCoinCluster', w: 32 }, { fn: '_createWindZone', w: 16 }
+        ];
+        const pick = () => {
+          const t = weights.reduce((s, o) => s + o.w, 0);
+          let r = Phaser.Math.Between(1, t);
+          for (const o of weights) { r -= o.w; if (r <= 0) return o.fn; }
+          return '_createCoin';
+        };
         while (x < 7000) {
-          const type = Phaser.Math.Between(0, 3);
-          switch (type) {
-            case 0: this._createTrampoline(x); break;
-            case 1: this._createFan(x); break;
-            case 2: this._createCrow(x); break;
-            case 3: this._createCoin(x); break;
-          }
-          x += Phaser.Math.Between(600, 900);
+          this[pick()](x);
+          x += Phaser.Math.Between(x < 3000 ? 450 : 550, x < 3000 ? 750 : 950);
         }
       }
 
       _createTrampoline(x) {
         const y = 1200;
-        const body = this.matter.add.rectangle(x, y, 80, 20, {
-          isStatic: true,
-          label: 'trampoline',
-          restitution: 0.3
-        });
-        const sprite = this.add.rectangle(x, y, 80, 20, 0x44ff44);
+        const body = this.matter.add.rectangle(x, y, 80, 20, { isStatic: true, label: 'trampoline', restitution: PHYSICS.trampoline.restitution, friction: 0.1 });
+        const sprite = VF.drawTrampoline(this, x, y);
         this.worldObjects.push({ type: 'trampoline', body, sprite });
       }
-
       _createFan(x) {
         const y = 1100;
-        const body = this.matter.add.rectangle(x, y, 50, 50, {
-          isStatic: true,
-          label: 'fan'
-        });
-        const sprite = this.add.rectangle(x, y, 50, 50, 0x888888);
-        // «Лопасти» — декоративные линии
-        const g = this.add.graphics();
-        g.lineStyle(3, 0xcccccc);
-        g.strokeCircle(x, y, 18);
-        this.worldObjects.push({ type: 'fan', body, sprite, g });
+        const body = this.matter.add.rectangle(x, y, 50, 50, { isStatic: true, label: 'fan' });
+        const sprite = VF.drawFan(this, x, y);
+        this.worldObjects.push({ type: 'fan', body, sprite, x, y });
       }
-
       _createCrow(x) {
         const y = 800;
-        const body = this.matter.add.circle(x, y, 15, {
-          isStatic: true,
-          label: 'crow'
-        });
-        const sprite = this.add.circle(x, y, 15, 0x111111);
+        const body = this.matter.add.circle(x, y, 15, { isStatic: true, label: 'crow' });
+        const sprite = VF.drawCrow(this, x, y);
         const crow = { body, sprite, baseX: x, startTime: this.time.now };
         this.crows.push(crow);
         this.worldObjects.push({ type: 'crow', body, sprite, crow });
       }
-
-      _createCoin(x) {
-        const y = Phaser.Math.Between(900, 1150);
-        const body = this.matter.add.circle(x, y, 10, {
-          isStatic: true,
-          isSensor: true,
-          label: 'coin'
-        });
-        const sprite = this.add.circle(x, y, 10, 0xffdd00);
+      _createCoin(x, y) {
+        y = y || Phaser.Math.Between(900, 1150);
+        const body = this.matter.add.circle(x, y, 10, { isStatic: true, isSensor: true, label: 'coin' });
+        const sprite = VF.drawCoin(this, x, y);
         this.worldObjects.push({ type: 'coin', body, sprite, collected: false });
       }
+      _createCoinCluster(x) {
+        const n = Phaser.Math.Between(3, 5);
+        for (let i = 0; i < n; i++) this._createCoin(x + i * 42, Phaser.Math.Between(920, 1120) - i * 28);
+      }
+      _createWindZone(x) {
+        const body = this.matter.add.rectangle(x, 1000, 100, 200, { isStatic: true, isSensor: true, label: 'wind' });
+        const g = this.add.graphics().setDepth(19);
+        g.fillStyle(0x88CCFF, 0.2);
+        for (let i = 0; i < 5; i++) g.fillTriangle(x - 40 + i * 18, 920, x - 20 + i * 18, 1080, x + i * 18, 920);
+        this.worldObjects.push({ type: 'wind', body, sprite: g, x, forceX: 0.0006 });
+      }
 
-      // ----------------------------------------------------------
-      // Создание бабки-ragdoll
-      // ----------------------------------------------------------
       createGranny(x, y) {
-        const head = this.matter.add.circle(x, y - 28, 18, {
-          mass: 0.5,
-          label: 'grannyHead',
-          friction: 0.3,
-          restitution: 0.2
-        });
-        const body = this.matter.add.rectangle(x, y + 5, 24, 40, {
-          mass: 1,
-          label: 'grannyBody',
-          friction: 0.3,
-          restitution: 0.2
-        });
-        const legs = this.matter.add.rectangle(x, y + 38, 30, 30, {
-          mass: 1.2,
-          label: 'grannyLegs',
-          friction: 0.3,
-          restitution: 0.2
-        });
-
-        const c1 = this.matter.add.constraint(head, body, 2, 1, { stiffness: 1 });
-        const c2 = this.matter.add.constraint(body, legs, 2, 1, { stiffness: 1 });
-
-        const headSprite = this.add.circle(0, 0, 18, 0xffccaa);
-        const bodySprite = this.add.rectangle(0, 0, 24, 40, 0xff6699);
-        const legsSprite = this.add.rectangle(0, 0, 30, 30, 0x9966ff);
-
-        // Глаза на голове
-        const eyeL = this.add.circle(0, 0, 3, 0x000000);
-        const eyeR = this.add.circle(0, 0, 3, 0x000000);
-
+        const cm = PHYSICS.granny;
+        const head = this.matter.add.circle(x, y - 28, 18, { mass: 0.7, label: 'grannyHead', ...cm });
+        const body = this.matter.add.rectangle(x, y + 5, 24, 40, { mass: 1.4, label: 'grannyBody', ...cm });
+        const legs = this.matter.add.rectangle(x, y + 38, 30, 30, { mass: 1.6, label: 'grannyLegs', ...cm });
+        const c1 = this.matter.add.constraint(head, body, 4, 0.8, { stiffness: 0.65, damping: 0.08 });
+        const c2 = this.matter.add.constraint(body, legs, 4, 0.8, { stiffness: 0.65, damping: 0.08 });
         return {
-          head, body, legs,
-          constraints: [c1, c2],
-          headSprite, bodySprite, legsSprite,
-          eyeL, eyeR
+          head, body, legs, constraints: [c1, c2],
+          headSprite: VF.drawGrannyHead(this),
+          bodySprite: VF.drawGrannyBody(this),
+          legsSprite: VF.drawGrannyLegs(this)
         };
       }
 
-      /** Синхронизация спрайтов с Matter-телами */
       _syncGrannySprites() {
         if (!this.granny) return;
         const g = this.granny;
-        const parts = [
-          { body: g.head, sprite: g.headSprite },
-          { body: g.body, sprite: g.bodySprite },
-          { body: g.legs, sprite: g.legsSprite }
-        ];
-        parts.forEach(({ body, sprite }) => {
-          sprite.setPosition(body.position.x, body.position.y);
-          sprite.setRotation(body.angle);
+        [{ b: g.head, s: g.headSprite }, { b: g.body, s: g.bodySprite }, { b: g.legs, s: g.legsSprite }].forEach(({ b, s }) => {
+          s.setPosition(b.position.x, b.position.y).setRotation(b.angle);
+          s.setDepth(30 + Math.floor(b.position.y));
         });
-        // Глаза
-        const hx = g.head.position.x;
-        const hy = g.head.position.y;
-        const ha = g.head.angle;
-        const off = 7;
-        g.eyeL.setPosition(hx + Math.cos(ha - 0.5) * off, hy + Math.sin(ha - 0.5) * off);
-        g.eyeR.setPosition(hx + Math.cos(ha + 0.5) * off, hy + Math.sin(ha + 0.5) * off);
       }
 
-      /** Позиция дула пушки */
       _getMuzzlePos() {
         const rad = Phaser.Math.DegToRad(this.cannonAngleDeg);
-        const pivotX = this.cannonX;
-        const pivotY = this.cannonY;
-        const localMuzzleX = 40;
-        const localMuzzleY = -60;
-        const cos = Math.cos(rad);
-        const sin = Math.sin(rad);
+        const lx = 16, ly = -75;
         return {
-          x: pivotX + localMuzzleX * cos - localMuzzleY * sin,
-          y: pivotY + localMuzzleX * sin + localMuzzleY * cos
+          x: this.cannonX + lx * Math.cos(rad) - ly * Math.sin(rad),
+          y: this.cannonY + lx * Math.sin(rad) + ly * Math.cos(rad)
         };
       }
 
-      // ----------------------------------------------------------
-      // Управление
-      // ----------------------------------------------------------
+      _easeOutQuad(t) { return 1 - (1 - t) * (1 - t); }
+      _getChargePower() { return this._easeOutQuad(Math.min(1, (this.time.now - this.chargeStartTime) / PHYSICS.cannon.chargeMs)); }
+
       _onPointerDown(pointer) {
-        if (this.isGameOver) return;
-
-        // Тап по экрану во время полёта — пердёж
+        if (this.isGameOver || this.tutorialActive) return;
+        SoundFX._ensure();
         if (this.isFlying) {
-          this._doFart();
-          return;
+          if (this.fartBtn.visible && this.fartBtn.getBounds().contains(pointer.x, pointer.y)) return;
+          this._doFart(); return;
         }
-
         if (this.isCharging) return;
-
         this.isCharging = true;
         this.chargeStartTime = this.time.now;
         this.chargeProgress = 0;
         this.forceBar.setVisible(true);
         this._updateCannonAngle(pointer);
       }
-
       _onPointerMove(pointer) {
         if (!this.isCharging) return;
         this._updateCannonAngle(pointer);
-        const elapsed = this.time.now - this.chargeStartTime;
-        this.chargeProgress = Math.min(1, elapsed / 1500);
+        this.chargeProgress = this._getChargePower();
         this._drawForceBar();
+        this._drawTrajectoryPreview();
       }
-
       _onPointerUp() {
         if (!this.isCharging || this.isGameOver) return;
         this._fire();
@@ -488,391 +762,325 @@
 
       _updateCannonAngle(pointer) {
         const cam = this.cameras.main;
-        const worldY = pointer.y + cam.scrollY;
-        // Верх экрана -> 70°, низ -> 20°
-        const screenTop = cam.scrollY;
-        const screenBot = cam.scrollY + cam.height;
-        const t = Phaser.Math.Clamp((worldY - screenTop) / (screenBot - screenTop), 0, 1);
-        this.cannonAngleDeg = Phaser.Math.Linear(70, 20, t);
-        this.cannon.setRotation(Phaser.Math.DegToRad(-this.cannonAngleDeg));
+        const wx = pointer.x + cam.scrollX, wy = pointer.y + cam.scrollY;
+        const m = this._getMuzzlePos();
+        let deg = Phaser.Math.RadToDeg(Math.atan2(m.y - wy, wx - m.x));
+        this.cannonAngleDeg = Phaser.Math.Clamp(deg, PHYSICS.cannon.angleMin, PHYSICS.cannon.angleMax);
+        this.cannon.setAngle(-this.cannonAngleDeg);
       }
 
       _drawForceBar() {
+        if (this._lastDrawnProgress === this.chargeProgress) return;
+        this._lastDrawnProgress = this.chargeProgress;
         const g = this.forceBar;
         g.clear();
-        const barX = this.cannonX;
-        const barY = this.cannonY - 120;
-        const barW = 120;
-        const barH = 16;
-        g.fillStyle(0x333333, 0.8);
-        g.fillRect(barX - barW / 2, barY, barW, barH);
-        g.fillStyle(0x4488ff, 1);
-        g.fillRect(barX - barW / 2, barY, barW * this.chargeProgress, barH);
+        const bx = this.cannonX, by = this.cannonY - 130, bw = 140, bh = 20;
+        g.fillStyle(0x2C3E50, 0.7); g.fillRoundedRect(bx - bw/2, by, bw, bh, 8);
+        const p = this.chargeProgress;
+        const col = p < 0.5 ? 0x3498DB : p < 0.8 ? 0xF1C40F : 0xE74C3C;
+        if (p > 0) { g.fillStyle(col, 1); g.fillRoundedRect(bx - bw/2, by, bw * p, bh, 8); }
+        if (p > 0.85) { g.fillStyle(col, 0.3); g.fillRoundedRect(bx - bw/2 - 4, by - 4, bw * p + 8, bh + 8, 10); }
+      }
+
+      _drawTrajectoryPreview() {
+        if (!this.isCharging) { this.trajectoryDots.forEach(d => d.setVisible(false)); return; }
+        const m = this._getMuzzlePos();
+        const speed = Phaser.Math.Linear(PHYSICS.cannon.minSpeed, PHYSICS.cannon.maxSpeed, this._getChargePower());
+        const rad = Phaser.Math.DegToRad(this.cannonAngleDeg);
+        let vx = Math.cos(rad) * speed, vy = -Math.sin(rad) * speed;
+        let x = m.x, y = m.y;
+        const g = PHYSICS.gravity.y;
+        this.trajectoryDots.forEach((dot, i) => {
+          x += vx * 3; y += vy * 3; vy += g * 0.5;
+          dot.setPosition(x, y).setVisible(true);
+          vx *= 0.99;
+        });
       }
 
       _fire() {
         this.isCharging = false;
         this.forceBar.setVisible(false);
+        this.trajectoryDots.forEach(d => d.setVisible(false));
         this.isFlying = true;
+        this._launchTime = this.time.now;
+        this.groundTouched = false;
+        this.stallTimer = 0;
 
-        const muzzle = this._getMuzzlePos();
-        this.granny = this.createGranny(muzzle.x, muzzle.y);
-
-        const speed = 15 * this.chargeProgress + 5;
+        const m = this._getMuzzlePos();
+        this.granny = this.createGranny(m.x, m.y);
+        const speed = Phaser.Math.Linear(PHYSICS.cannon.minSpeed, PHYSICS.cannon.maxSpeed, this._getChargePower());
         const rad = Phaser.Math.DegToRad(this.cannonAngleDeg);
-        const vx = Math.cos(rad) * speed;
-        const vy = -Math.sin(rad) * speed;
-        setGrannyVelocity(this, this.granny, vx, vy);
+        setGrannyVelocity(this, this.granny, Math.cos(rad) * speed, -Math.sin(rad) * speed);
 
         SoundFX.shoot();
+        this._feedbackHit(6, 0);
+        this.tweens.add({ targets: this.cannon, x: this.cannonX + 10, duration: 80, yoyo: true });
+        const flash = this.add.circle(m.x, m.y, 20, 0xffffff, 0.8).setDepth(25);
+        this.tweens.add({ targets: flash, alpha: 0, scale: 2, duration: 120, onComplete: () => flash.destroy() });
 
-        // Камера следует за бабкой
-        this.cameras.main.startFollow(this.granny.bodySprite, false, 0.1, 0.1);
-
-        // Кнопка пердежа
+        this.cameras.main.startFollow(this.granny.bodySprite, true, 0.08, 0.08, 0, -100);
+        this.cameras.main.setDeadzone(180, 400);
         this.fartBtn.setVisible(true);
-        this.fartBtnText.setVisible(true);
       }
 
-      // ----------------------------------------------------------
-      // Пердёж
-      // ----------------------------------------------------------
       _doFart() {
         if (!this.isFlying || this.fartUsed || this.isGameOver || !this.granny) return;
-
         this.fartUsed = true;
         this.fartBtn.setVisible(false);
-        this.fartBtnText.setVisible(false);
-
-        const head = this.granny.head;
-        const angle = head.angle;
-        const force = 0.4;
-        this.matter.body.applyForce(head, head.position, {
-          x: Math.cos(angle) * force * 0.01,
-          y: Math.sin(angle) * force * 0.01
+        const g = this.granny;
+        const vx = g.body.velocity.x, vy = g.body.velocity.y;
+        const spd = Math.hypot(vx, vy) || 1;
+        const nx = vx / spd, ny = vy / spd;
+        getGrannyBodies(g).forEach((b, i) => {
+          const sc = i === 2 ? 1.3 : 1;
+          this.matter.body.applyForce(b, b.position, { x: nx * 0.045 * sc, y: ny * 0.045 * sc - 0.012 });
         });
-
+        for (let i = 0; i < 3; i++) {
+          const cl = this.add.circle(g.legs.position.x, g.legs.position.y, 12, 0xCCFFCC, 0.6).setDepth(50);
+          this.tweens.add({ targets: cl, scale: 2.5, alpha: 0, duration: 350, delay: i * 60, onComplete: () => cl.destroy() });
+        }
+        VF.burst(this, g.legs.position.x, g.legs.position.y, 'smoke', { speed: { min: 20, max: 60 }, scale: { start: 0.5, end: 1.5 }, alpha: { start: 0.6, end: 0 }, lifespan: 500, quantity: 15 });
+        this._feedbackHit(6, 0.05);
         SoundFX.fart();
-
-        // Облачко у ног
-        const lx = this.granny.legs.position.x;
-        const ly = this.granny.legs.position.y;
-        const cloud = this.add.circle(lx, ly, 25, 0xffffff, 0.5);
-        this.time.delayedCall(200, () => cloud.destroy());
       }
 
-      // ----------------------------------------------------------
-      // Столкновения
-      // ----------------------------------------------------------
       _onCollisionStart(event) {
         if (!this.granny) return;
-
-        event.pairs.forEach((pair) => {
+        event.pairs.forEach(pair => {
           const { bodyA, bodyB } = pair;
           const labels = [bodyA.label, bodyB.label];
-          const grannyBody = isGrannyPart(bodyA) ? bodyA : (isGrannyPart(bodyB) ? bodyB : null);
-          const other = grannyBody === bodyA ? bodyB : bodyA;
+          const gPart = isGrannyPart(bodyA) ? bodyA : (isGrannyPart(bodyB) ? bodyB : null);
+          const other = gPart === bodyA ? bodyB : bodyA;
+          if (!gPart) return;
 
-          if (!grannyBody) return;
-
-          // Земля
           if (labels.includes('ground')) {
             this.groundTouched = true;
+            if (gPart.velocity.y > 8) {
+              this._feedbackHit(10, 0.12);
+              SoundFX.bounce(1.2);
+              VF.burst(this, gPart.position.x, gPart.position.y, 'dust', { speed: { min: 20, max: 80 }, angle: { min: 160, max: 200 }, scale: { start: 0.4, end: 0 }, alpha: { start: 0.6, end: 0 }, lifespan: 400, quantity: 12 });
+            }
           }
-
-          // Батут
-          if (labels.includes('trampoline')) {
-            getGrannyBodies(this.granny).forEach((b) => {
-              this.matter.body.setVelocity(b, {
-                x: b.velocity.x,
-                y: b.velocity.y - 0.5
-              });
+          if (labels.includes('trampoline') && !this._hasHit(other.id)) {
+            this._registerHit(other.id);
+            getGrannyBodies(this.granny).forEach(b => {
+              this.matter.body.setVelocity(b, { x: b.velocity.x * 1.05, y: Math.min(b.velocity.y, PHYSICS.trampoline.boostVy) });
             });
+            this._feedbackHit(4, 0.08);
+            SoundFX.bounce();
+            const tr = this.worldObjects.find(o => o.body === other);
+            if (tr?.sprite) this.tweens.add({ targets: tr.sprite, scaleY: 0.7, duration: 80, yoyo: true });
           }
-
-          // Вентилятор
-          if (labels.includes('fan')) {
-            const f = 0.3;
-            const angle = -Math.PI / 4;
-            applyImpulseToGranny(this, this.granny, Math.cos(angle) * f * 0.01, Math.sin(angle) * f * 0.01);
+          if (labels.includes('fan') && !this._hasHit(other.id)) {
+            this._registerHit(other.id, 200);
+            applyImpulseToGranny(this, this.granny, 0.035, -0.035);
+            this._feedbackHit(3, 0);
+            SoundFX.bounce(0.8);
           }
-
-          // Ворона
-          if (labels.includes('crow')) {
+          if (labels.includes('crow') && !this._hasHit(other.id)) {
+            this._registerHit(other.id);
             const a = Math.random() * Math.PI * 2;
-            const f = 0.1;
-            applyImpulseToGranny(this, this.granny, Math.cos(a) * f * 0.01, Math.sin(a) * f * 0.01);
+            applyImpulseToGranny(this, this.granny, Math.cos(a) * 0.035, Math.sin(a) * 0.035);
+            this._feedbackHit(8, 0.1);
           }
-
-          // Монета
           if (labels.includes('coin')) {
-            const coinObj = this.worldObjects.find(
-              (o) => o.type === 'coin' && o.body === other && !o.collected
-            );
-            if (coinObj) {
+            const coinBody = bodyA.label === 'coin' ? bodyA : bodyB;
+            const coinObj = this.worldObjects.find(o => o.type === 'coin' && o.body === coinBody && !o.collected);
+            if (coinObj && !this._hasHit(coinBody.id)) {
+              this._registerHit(coinBody.id);
               coinObj.collected = true;
-              this.totalCoins += 10;
+              const now = this.time.now;
+              if (now - this.lastCoinTime < COMBO_WINDOW_MS) this.coinCombo++;
+              else this.coinCombo = 1;
+              this.lastCoinTime = now;
+              const mult = COMBO_MULT[Math.min(this.coinCombo - 1, COMBO_MULT.length - 1)];
+              const pts = Math.floor(10 * mult);
+              this.totalCoins += pts;
               SoundFX.coin();
-
-              const cx = coinObj.sprite.x;
-              const cy = coinObj.sprite.y;
-              this.tweens.add({
-                targets: coinObj.sprite,
-                alpha: 0,
-                scale: 1.5,
-                duration: 200,
-                onComplete: () => {
-                  coinObj.sprite.destroy();
-                  this.matter.world.remove(coinObj.body);
-                }
-              });
-
-              const popup = this.add.text(cx, cy - 30, '+10', {
-                fontFamily: 'Arial', fontSize: '28px', color: '#ffdd00',
-                stroke: '#000', strokeThickness: 3
-              }).setOrigin(0.5);
-              this.tweens.add({
-                targets: popup,
-                y: cy - 80,
-                alpha: 0,
-                duration: 500,
-                onComplete: () => popup.destroy()
-              });
+              if (this.coinCombo > 1) {
+                this.hudCombo.setText(`COMBO x${this.coinCombo}!`);
+                this.time.delayedCall(1200, () => this.hudCombo.setText(''));
+              }
+              if (this.coinCombo >= 3) this._feedbackHit(2, 0);
+              const cx = coinObj.sprite.x, cy = coinObj.sprite.y;
+              VF.burst(this, cx, cy, 'sparkle', { speed: { min: 30, max: 80 }, scale: { start: 0.5, end: 0 }, lifespan: 300, quantity: 10 });
+              this.tweens.add({ targets: coinObj.sprite, alpha: 0, scale: 1.8, duration: 200, onComplete: () => { coinObj.sprite.destroy(); this.matter.world.remove(coinObj.body); } });
+              this._floatText(cx, cy - 20, this.coinCombo > 1 ? `+${pts} x${this.coinCombo}` : `+${pts}`, '#FFD700');
             }
           }
         });
       }
 
-      // ----------------------------------------------------------
-      // Конец игры
-      // ----------------------------------------------------------
       endGame() {
         if (this.isGameOver) return;
         this.isGameOver = true;
         this.isFlying = false;
-
-        this.matter.world.pause();
+        this.matter.world.enabled = false;
         this.cameras.main.stopFollow();
+        this.fartBtn.setVisible(false);
 
-        const grannyX = this.granny ? this.granny.body.position.x : 150;
-        const distance = Math.max(0, (grannyX - 150) / 10);
+        const gx = this.granny ? this.granny.body.position.x : 150;
+        const distance = Math.max(0, (gx - 150) / 10);
         this.bestDistance = Math.floor(distance);
-        const totalScore = this.bestDistance + this.totalCoins;
-
-        // Обновить рекорд
-        const oldRecord = parseInt(localStorage.getItem(STORAGE.RECORD) || '0', 10);
-        if (this.bestDistance > oldRecord) {
-          localStorage.setItem(STORAGE.RECORD, String(this.bestDistance));
-        }
-
-        // Сохранить для shareRecord
+        this._lastTotal = this.bestDistance + this.totalCoins;
         this._lastDistance = this.bestDistance;
         this._lastCoins = this.totalCoins;
-        this._lastTotal = totalScore;
 
+        const old = parseInt(localStorage.getItem(STORAGE.RECORD) || '0', 10);
+        this._isNewRecord = this.bestDistance > old;
+        if (this._isNewRecord) localStorage.setItem(STORAGE.RECORD, String(this.bestDistance));
+        saveYaStats({ bestDistance: this.bestDistance, bestTotal: this._lastTotal });
+
+        this.matter.world.off('collisionstart', this._onCollisionStart, this);
         this._showResults(distance);
       }
 
       _showResults(distance) {
         const cam = this.cameras.main;
-        const cx = cam.scrollX + cam.width / 2;
-        const cy = cam.scrollY + cam.height / 2;
+        const cx = cam.width / 2, cy = cam.height / 2;
+        const ins = this.insets;
+        const isRecord = this._isNewRecord;
 
-        const overlay = this.add.rectangle(cx, cy, cam.width, cam.height, 0x000000, 0.7)
-          .setScrollFactor(0).setDepth(200);
+        const overlay = this.add.rectangle(cx, cy, cam.width, cam.height, 0x000000, 0).setScrollFactor(0).setDepth(200);
+        this.tweens.add({ targets: overlay, fillAlpha: 0.75, duration: 250 });
+
+        const panel = VF.drawPanel(this, cx, cy, 560, 680, 201);
+        panel.setScrollFactor(0);
 
         const phrase = Phaser.Utils.Array.GetRandom(STYLE_PHRASES);
-        const lines = [
-          'Результат',
-          `Дальность: ${Math.floor(distance)} м`,
-          `Монеты: ${this.totalCoins}`,
-          `Всего очков: ${this._lastTotal}`,
-          phrase
+        const elems = [];
+        elems.push(this.add.text(cx, cy - 260, 'Результат', { fontFamily: 'Segoe UI', fontSize: '42px', fontStyle: 'bold', color: '#2C3E50' }).setOrigin(0.5).setScrollFactor(0).setDepth(202).setScale(0.5));
+        elems.push(this.add.text(cx, cy - 170, `📏 Дальность: ${Math.floor(distance)} м${isRecord ? ' 🏆' : ''}`, { fontFamily: 'Segoe UI', fontSize: '28px', color: '#2C3E50' }).setOrigin(0.5).setScrollFactor(0).setDepth(202).setAlpha(0));
+        elems.push(this.add.text(cx, cy - 120, `🪙 Монеты: ${this.totalCoins}`, { fontFamily: 'Segoe UI', fontSize: '28px', color: '#2C3E50' }).setOrigin(0.5).setScrollFactor(0).setDepth(202).setAlpha(0));
+        elems.push(this.add.text(cx, cy - 70, `⭐ Всего: ${this._lastTotal}`, { fontFamily: 'Segoe UI', fontSize: '30px', fontStyle: 'bold', color: '#E74C3C' }).setOrigin(0.5).setScrollFactor(0).setDepth(202).setAlpha(0));
+        elems.push(this.add.text(cx, cy - 10, `"${phrase}"`, { fontFamily: 'Segoe UI', fontSize: '22px', fontStyle: 'italic', color: '#7F8C8D' }).setOrigin(0.5).setScrollFactor(0).setDepth(202).setAlpha(0));
+
+        this.tweens.add({ targets: elems[0], scale: 1, duration: 350, ease: 'Back.easeOut' });
+        elems.slice(1).forEach((el, i) => this.tweens.add({ targets: el, alpha: 1, duration: 250, delay: 200 + i * 80 }));
+
+        const btns = [
+          { label: '🔄 Играть ещё', color: 0x2ECC71, cb: () => this.scene.restart() },
+          { label: '🏠 Меню', color: 0x3498DB, cb: () => this._goToMenu() },
+          { label: '📤 Поделиться', color: 0xE67E22, cb: () => shareRecord(this._lastDistance) },
+          { label: '📺 x2 монет', color: 0x9B59B6, cb: () => showRewarded(this) }
         ];
-
-        const title = this.add.text(cx, cy - 280, lines[0], {
-          fontFamily: 'Arial', fontSize: '48px', color: '#ffffff'
-        }).setOrigin(0.5).setScrollFactor(0).setDepth(201);
-
-        const info = this.add.text(cx, cy - 160, lines.slice(1, 4).join('\n'), {
-          fontFamily: 'Arial', fontSize: '30px', color: '#ffffff', align: 'center'
-        }).setOrigin(0.5).setScrollFactor(0).setDepth(201);
-
-        const phraseText = this.add.text(cx, cy - 40, phrase, {
-          fontFamily: 'Arial', fontSize: '26px', color: '#ffcc00', fontStyle: 'italic'
-        }).setOrigin(0.5).setScrollFactor(0).setDepth(201);
-
-        // Кнопки
-        const btnY = cy + 80;
-        const gap = 90;
-
-        this._makeResultButton(cx, btnY, 'Играть ещё', 0x44aa44, () => {
-          this.scene.restart();
+        btns.forEach((b, i) => {
+          VF.drawButton(this, cx, ins.top + 420 + i * 76, 400, 64, b.color, b.label, 203, b.cb);
         });
-
-        this._makeResultButton(cx, btnY + gap, 'Меню', 0x4488cc, () => {
-          this._goToMenu();
-        });
-
-        this._makeResultButton(cx, btnY + gap * 2, 'Поделиться рекордом', 0xcc8844, () => {
-          shareRecord(this._lastDistance);
-        });
-
-        this.resultCoinBtn = this._makeResultButton(cx, btnY + gap * 3, 'x2 монет (реклама)', 0xaa44aa, () => {
-          showRewarded(this);
-        });
-
-        this._resultUI = { overlay, title, info, phraseText };
+        this._resultUI = { info: elems[2] };
       }
 
-      _makeResultButton(x, y, label, color, callback) {
-        const btn = this.add.rectangle(x, y, 400, 70, color)
-          .setScrollFactor(0).setDepth(201).setInteractive({ useHandCursor: true });
-        const txt = this.add.text(x, y, label, {
-          fontFamily: 'Arial', fontSize: '26px', color: '#ffffff'
-        }).setOrigin(0.5).setScrollFactor(0).setDepth(202);
-        btn.on('pointerdown', callback);
-        return { btn, txt };
-      }
-
-      _goToMenu() {
-        const count = parseInt(localStorage.getItem(STORAGE.RUN_COUNT) || '0', 10);
-        if (count > 0 && count % 3 === 0) {
-          try {
-            if (window.YaGames && window.YaGames.adv) {
-              window.YaGames.adv.showFullscreenAdv();
-            }
-          } catch (e) { /* ignore */ }
-        }
-        this.scene.start('MenuScene');
-      }
+      _goToMenu() { this.scene.start('MenuScene'); }
 
       _incrementRunCount() {
-        const count = parseInt(localStorage.getItem(STORAGE.RUN_COUNT) || '0', 10) + 1;
-        localStorage.setItem(STORAGE.RUN_COUNT, String(count));
+        localStorage.setItem(STORAGE.RUN_COUNT, String(parseInt(localStorage.getItem(STORAGE.RUN_COUNT) || '0', 10) + 1));
       }
 
-      // ----------------------------------------------------------
-      // Update
-      // ----------------------------------------------------------
+      _showTutorialIfNeeded() {
+        if (localStorage.getItem(STORAGE.TUTORIAL)) return;
+        this.tutorialActive = true;
+        const steps = [
+          { title: '① Прицел', text: 'Водите пальцем вверх/вниз\nчтобы настроить угол пушки', y: 350 },
+          { title: '② Заряд', text: 'Удерживайте палец —\nполоска силы заполняется', y: 480 },
+          { title: '③ Пёрнуть', text: 'В полёте нажмите «Пёрнуть»\nили тапните по экрану (1 раз)', y: 610 }
+        ];
+        let step = 0;
+        const overlay = this.add.rectangle(360, 640, 720, 1280, 0x000000, 0.65).setScrollFactor(0).setDepth(300).setInteractive();
+        const panel = VF.drawPanel(this, 360, 640, 520, 320, 301);
+        panel.setScrollFactor(0);
+        const titleT = this.add.text(360, 520, '', { fontFamily: 'Segoe UI', fontSize: '32px', fontStyle: 'bold', color: '#2C3E50' }).setOrigin(0.5).setScrollFactor(0).setDepth(302);
+        const bodyT = this.add.text(360, 620, '', { fontFamily: 'Segoe UI', fontSize: '24px', color: '#555', align: 'center' }).setOrigin(0.5).setScrollFactor(0).setDepth(302);
+        const show = () => {
+          titleT.setText(steps[step].title);
+          bodyT.setText(steps[step].text);
+        };
+        show();
+        const nextBtn = VF.drawButton(this, 360, 740, 240, 56, 0x2ECC71, 'Далее', 303, () => {
+          step++;
+          if (step >= steps.length) {
+            localStorage.setItem(STORAGE.TUTORIAL, '1');
+            this.tutorialActive = false;
+            overlay.destroy(); panel.destroy(); titleT.destroy(); bodyT.destroy(); nextBtn.destroy();
+          } else show();
+        });
+      }
+
       update(time) {
         if (this.isCharging) {
-          const elapsed = time - this.chargeStartTime;
-          this.chargeProgress = Math.min(1, elapsed / 1500);
+          this.chargeProgress = this._getChargePower();
           this._drawForceBar();
+          this._drawTrajectoryPreview();
+          if (this.chargeProgress >= 1) this._fire();
         }
 
-        // Вороны — синусоида
-        this.crows.forEach((crow) => {
-          const t = (time - crow.startTime) / 1000;
-          const newY = 800 + Math.sin(t * 3) * 50;
-          this.matter.body.setPosition(crow.body, { x: crow.baseX, y: newY });
-          crow.sprite.setPosition(crow.baseX, newY);
+        this.crows.forEach(c => {
+          const ny = 800 + Math.sin((time - c.startTime) / 1000 * 3) * 50;
+          this.matter.body.setPosition(c.body, { x: c.baseX, y: ny });
+          c.sprite.setPosition(c.baseX, ny);
         });
+
+        this.worldObjects.filter(o => o.type === 'fan').forEach(f => {
+          const blades = f.sprite.getData('blades');
+          if (blades) blades.setRotation(time / 80);
+        });
+
+        if (this.isFlying && this.granny) {
+          this.worldObjects.filter(o => o.type === 'wind').forEach(w => {
+            const bx = this.granny.body.position.x, by = this.granny.body.position.y;
+            if (bx > w.x - 50 && bx < w.x + 50 && by > 900 && by < 1100) {
+              applyImpulseToGranny(this, this.granny, w.forceX, -0.00015);
+            }
+          });
+        }
 
         if (this.granny) {
           this._syncGrannySprites();
           this._updateHUD();
-
           if (this.isFlying && !this.isGameOver) {
-            const bx = this.granny.body.position.x;
-            const by = this.granny.body.position.y;
-
-            if (bx > 7800 || by < -200) {
-              this.endGame();
-              return;
-            }
-
+            const bx = this.granny.body.position.x, by = this.granny.body.position.y;
+            if (bx > 7800 || by < -200) { this.endGame(); return; }
             if (this.groundTouched) {
+              const airOk = (this.time.now - this._launchTime) > PHYSICS.stall.minAirTimeMs;
               const bodies = getGrannyBodies(this.granny);
-              const allSlow = bodies.every((b) => {
-                const spd = Math.sqrt(b.velocity.x ** 2 + b.velocity.y ** 2);
-                return spd < 0.5;
-              });
-
-              if (allSlow) {
+              const maxS = Math.max(...bodies.map(b => Math.hypot(b.velocity.x, b.velocity.y)));
+              const avgS = bodies.reduce((s, b) => s + Math.hypot(b.velocity.x, b.velocity.y), 0) / 3;
+              if (maxS > 2) this.stallTimer = 0;
+              else if (avgS < PHYSICS.stall.speedThreshold && airOk) {
                 this.stallTimer += this.game.loop.delta;
-                if (this.stallTimer >= 800) {
-                  this.endGame();
-                }
-              } else {
-                this.stallTimer = 0;
+                if (this.stallTimer >= PHYSICS.stall.durationMs) this.endGame();
+              }
+              if (by < this.groundY - 60 && this.granny.body.velocity.y < -1) {
+                this.groundTouched = false; this.stallTimer = 0;
               }
             }
           }
         }
-
-        // Ограничение камеры в пределах мира
-        const cam = this.cameras.main;
-        cam.scrollX = Phaser.Math.Clamp(cam.scrollX, 0, this.worldWidth - cam.width);
-        cam.scrollY = Phaser.Math.Clamp(cam.scrollY, 0, this.worldHeight - cam.height);
       }
     }
 
-    // ============================================================
-    // Яндекс SDK — вспомогательные функции
-    // ============================================================
-    function shareRecord(bestDistance) {
-      try {
-        const yg = window.YaGames;
-        if (yg && yg.share) {
-          yg.share({
-            title: `Я запустил бабку на ${bestDistance} м!`,
-            text: 'Побей мой рекорд в Бабке на Пушке!',
-            url: window.location.href
-          });
-        }
-      } catch (e) {
-        console.warn('shareRecord error:', e);
-      }
-    }
-
-    function showRewarded(scene) {
-      try {
-        const yg = window.YaGames;
-        const show = yg && yg.adv && yg.adv.showRewardedVideo
-          ? yg.adv.showRewardedVideo()
-          : Promise.resolve();
-
-        show.then(() => {
-          scene.totalCoins *= 2;
-          scene._lastCoins = scene.totalCoins;
-          scene._lastTotal = scene.bestDistance + scene.totalCoins;
-          if (scene._resultUI && scene._resultUI.info) {
-            scene._resultUI.info.setText(
-              `Дальность: ${scene.bestDistance} м\nМонеты: ${scene.totalCoins}\nВсего очков: ${scene._lastTotal}`
-            );
-          }
-        }).catch(() => {});
-      } catch (e) {
-        console.warn('showRewarded error:', e);
-      }
-    }
-
-    // ============================================================
-    // Запуск Phaser
-    // ============================================================
-    const config = {
+    // ================================================================
+    // ЗАПУСК
+    // ================================================================
+    setSplash(40, 'Запуск движка...');
+    new Phaser.Game({
       type: Phaser.AUTO,
-      width: 720,
-      height: 1280,
+      width: 720, height: 1280,
       parent: 'game-container',
-      backgroundColor: '#1a1a2e',
-      scale: {
-        mode: Phaser.Scale.FIT,
-        autoCenter: Phaser.Scale.CENTER_BOTH
-      },
+      backgroundColor: '#4A90D9',
+      roundPixels: true,
+      scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
+      fps: { target: 60 },
       physics: {
         default: 'matter',
         matter: {
-          gravity: { x: 0, y: 1 },
-          enableSleeping: false
+          gravity: PHYSICS.gravity,
+          enableSleeping: true,
+          positionIterations: 8,
+          velocityIterations: 6
         }
       },
       scene: [BootScene, MenuScene, GameScene]
-    };
-
-    new Phaser.Game(config);
+    });
   </script>
 </body>
 </html>
