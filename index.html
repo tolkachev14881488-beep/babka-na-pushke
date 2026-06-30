@@ -6,340 +6,116 @@
   <title>Бабка на Пушке</title>
   <script>
     window.YaGames = window.YaGames || {
-      init() { return Promise.resolve({ adv: this.adv, getPlayer: this.getPlayer }); },
+      init() { return Promise.resolve({ adv: this.adv }); },
       share(p) { alert('Поделиться: ' + (p?.title || '')); },
       adv: {
-        showRewardedVideo() { return new Promise(r => { alert('Реклама OK'); r(); }); },
+        showRewardedVideo() { return Promise.resolve(); },
         showFullscreenAdv() {}
-      },
-      getPlayer() { return Promise.resolve({ setStats() {}, getStats() { return Promise.resolve({}); } }); }
+      }
     };
   </script>
-  <script src="https://yastatic.net/s3/games-sdk/static/v1/games-sdk.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.js"></script>
   <style>
     * { margin:0; padding:0; box-sizing:border-box; }
-    html, body { width:100%; height:100%; overflow:hidden; background:#1a237e; touch-action:none; }
+    html, body { width:100%; height:100%; overflow:hidden; background:#1565c0; touch-action:none; }
     #game-container { width:100%; height:100%; }
   </style>
 </head>
 <body>
   <div id="game-container"></div>
   <script>
-    YaGames.init().catch(() => {});
+    // ================================================================
+    const W = 720, H = 1280, WORLD_W = 6000;
+    const GY = 1210;           // верх земли (трава)
+    const GROUND_BODY_Y = GY + 20;
+    const CX = 200, CY = GY - 15;  // пушка
+    const BARREL = 90;
+    const MAX_PULL = 180;
+    const STORE = { rec: 'grannyRecord' };
 
-    // ═══════════════════════════════════════════════════════════
-    // КОНФИГ
-    // ═══════════════════════════════════════════════════════════
-    const CFG = {
-      w: 720, h: 1280,
-      worldW: 6500,
-      groundY: 1210,          // линия травы
-      groundH: 50,
-      cannonX: 200,
-      cannonY: 1195,          // точка опоры пушки
-      barrelLen: 95,
-      maxPull: 200,
-      minSpd: 22,
-      maxSpd: 48,
-      gravity: 1.1
-    };
-
-    const STORE = { rec: 'grannyRecord', runs: 'grannyRunCount' };
-
-    // ═══════════════════════════════════════════════════════════
-    // ПРОРИСОВКА — контурный мультяшный стиль
-    // ═══════════════════════════════════════════════════════════
-    const Draw = {
-      /** Обводка + заливка круга */
-      circle(g, x, y, r, fill, stroke = 0x3E2723, sw = 2) {
-        g.fillStyle(fill, 1); g.fillCircle(x, y, r);
-        g.lineStyle(sw, stroke, 0.85); g.strokeCircle(x, y, r);
-      },
-      /** Обводка + заливка скруглённого прямоугольника */
-      round(g, x, y, w, h, r, fill, stroke = 0x3E2723, sw = 2) {
-        g.fillStyle(fill, 1); g.fillRoundedRect(x, y, w, h, r);
-        g.lineStyle(sw, stroke, 0.85); g.strokeRoundedRect(x, y, w, h, r);
-      },
-
-      /** Голова бабки — рисуется в центре (0,0) контейнера */
-      grannyHead(g) {
-        g.clear();
-        // волосы / пучок
-        this.circle(g, 0, -6, 22, 0xB0BEC5);
-        this.circle(g, 0, -18, 12, 0x90A4AE);
-        // лицо
-        this.circle(g, 0, 2, 19, 0xFFCCBC);
-        // щёки
-        g.fillStyle(0xFFAB91, 0.45); g.fillCircle(-10, 6, 6); g.fillCircle(10, 6, 6);
-        // морщины
-        g.lineStyle(1, 0xD7CCC8, 0.7);
-        g.lineBetween(-8, -2, -4, -4); g.lineBetween(8, -2, 4, -4);
-        g.lineBetween(-6, 10, 6, 10);
-        // глаза
-        this.circle(g, -7, 0, 5, 0xFFFFFF, 0x3E2723, 1.5);
-        this.circle(g, 7, 0, 5, 0xFFFFFF, 0x3E2723, 1.5);
-        g.fillStyle(0x212121, 1); g.fillCircle(-6, 0, 2.5); g.fillCircle(8, 0, 2.5);
-        g.fillStyle(0xFFFFFF, 1); g.fillCircle(-5, -1, 1); g.fillCircle(9, -1, 1);
-        // очки
-        g.lineStyle(2.5, 0x37474F, 1);
-        g.strokeCircle(-7, 0, 8); g.strokeCircle(7, 0, 8);
-        g.lineBetween(1, 0, -1, 0);
-        g.lineStyle(2, 0x37474F, 1); g.lineBetween(-15, -2, -22, -6); g.lineBetween(15, -2, 22, -6);
-        // рот
-        g.lineStyle(2, 0xC62828, 1);
-        g.beginPath(); g.arc(0, 8, 5, 0.3, Math.PI - 0.3); g.strokePath();
-        // платок
-        g.fillStyle(0xD32F2F, 1);
-        g.fillTriangle(-16, -8, 16, -8, 0, 6);
-        g.lineStyle(2, 0xB71C1C, 1); g.strokeTriangle(-16, -8, 16, -8, 0, 6);
-        g.fillStyle(0xFFFFFF, 0.9); g.fillRect(-12, -6, 24, 4);
-      },
-
-      /** Туловище */
-      grannyTorso(g) {
-        g.clear();
-        // платье
-        this.round(g, -18, -22, 36, 44, 8, 0xEC407A);
-        // горошек
-        [[-8,-10],[4,-4],[-4,6],[8,10],[0,0]].forEach(([x,y]) => {
-          this.circle(g, x, y, 3.5, 0xAD1457, 0x880E4F, 1);
-        });
-        // воротник
-        g.fillStyle(0xFFFFFF, 1); g.fillEllipse(0, -20, 14, 6);
-        // руки
-        this.round(g, -26, -8, 10, 22, 4, 0xFFCCBC);
-        this.round(g, 16, -8, 10, 22, 4, 0xFFCCBC);
-      },
-
-      /** Ноги + башмаки */
-      grannyLegs(g) {
-        g.clear();
-        this.round(g, -17, -12, 14, 26, 4, 0x7E57C2);
-        this.round(g, 3, -12, 14, 26, 4, 0x7E57C2);
-        this.round(g, -18, 10, 16, 10, 3, 0x3E2723);
-        this.round(g, 2, 10, 16, 10, 3, 0x3E2723);
-        // носки
-        g.fillStyle(0x5D4037, 1);
-        g.fillCircle(-10, 14, 4); g.fillCircle(10, 14, 4);
-      },
-
-      /** Пушка — рисуется от точки опоры, ствол вверх (−Y) */
-      cannon(g) {
-        g.clear();
-        // тень
-        g.fillStyle(0x000000, 0.15); g.fillEllipse(10, 22, 70, 12);
-        // колёса
-        [[-22, 16, 17], [32, 16, 17]].forEach(([x, y, r]) => {
-          this.circle(g, x, y, r, 0x424242);
-          g.lineStyle(2, 0x616161, 1);
-          for (let i = 0; i < 6; i++) {
-            const a = i * Math.PI / 3;
-            g.lineBetween(x, y, x + Math.cos(a) * (r - 4), y + Math.sin(a) * (r - 4));
-          }
-          this.circle(g, x, y, 4, 0x757575, 0x424242, 1);
-        });
-        // лафет
-        this.round(g, -38, 0, 88, 22, 5, 0x6D4C41);
-        this.round(g, -34, -6, 80, 16, 4, 0x8D6E63);
-        g.lineStyle(1, 0x5D4037, 0.6);
-        for (let i = 0; i < 4; i++) g.lineBetween(-30, -2 + i * 4, 40, -2 + i * 4);
-        // ствол
-        this.round(g, -10, -CFG.barrelLen + 10, 28, CFG.barrelLen - 10, 6, 0x546E7A, 0x37474F, 2.5);
-        g.fillStyle(0x90A4AE, 0.5); g.fillRect(-6, -CFG.barrelLen + 18, 8, CFG.barrelLen - 28);
-        // кольцо у дула
-        this.circle(g, 4, -CFG.barrelLen + 14, 16, 0xFFB300, 0xF57F17, 2);
-        g.fillStyle(0x212121, 1); g.fillCircle(4, -CFG.barrelLen + 14, 7);
-      },
-
-      trampoline(g) {
-        g.clear();
-        this.round(g, -44, 4, 88, 8, 2, 0x455A64);
-        for (let i = -3; i <= 3; i++) {
-          g.lineStyle(2, 0x9E9E9E, 1);
-          let sx = i * 12;
-          g.beginPath(); g.moveTo(sx, 4);
-          for (let j = 0; j < 4; j++) g.lineTo(sx + (j % 2 ? 4 : -4), 4 - j * 5);
-          g.strokePath();
-        }
-        this.round(g, -40, -6, 80, 14, 4, 0x00E676, 0x00C853, 2);
-        g.lineStyle(1, 0x00C853, 0.4);
-        for (let i = -36; i < 36; i += 12) {
-          g.lineBetween(i, -4, i + 12, 4); g.lineBetween(i + 12, -4, i, 4);
-        }
-      },
-
-      fan(g, rot) {
-        g.clear();
-        this.round(g, -24, -24, 48, 48, 6, 0x607D8B, 0x455A64, 2);
-        this.circle(g, 0, 0, 7, 0x37474F);
-        g.fillStyle(0xECEFF1, 0.95);
-        for (let i = 0; i < 4; i++) {
-          const a = rot + i * Math.PI / 2;
-          g.fillEllipse(Math.cos(a) * 13, Math.sin(a) * 13, 22, 7);
-        }
-        g.lineStyle(1, 0x90A4AE, 0.5);
-        for (let i = 0; i < 4; i++) {
-          const a = rot + i * Math.PI / 2;
-          g.lineBetween(0, 0, Math.cos(a) * 20, Math.sin(a) * 20);
-        }
-      },
-
-      crow(g, flap) {
-        g.clear();
-        g.fillStyle(0x212121, 1); g.fillEllipse(0, 2, 30, 18);
-        g.lineStyle(2, 0x000000, 0.5); g.strokeEllipse(0, 2, 30, 18);
-        this.circle(g, 12, -8, 10, 0x212121, 0x000000, 1.5);
-        g.fillStyle(0xFF9800, 1);
-        g.fillTriangle(20, -8, 30, -5, 20, -3);
-        g.lineStyle(1.5, 0xE65100, 1); g.strokeTriangle(20, -8, 30, -5, 20, -3);
-        g.fillStyle(0x424242, 0.9);
-        g.fillTriangle(-6, 0, -24 + flap, -14, -18, 8);
-        g.fillTriangle(6, 0, 24 - flap, -14, 18, 8);
-      },
-
-      coin(g, t) {
-        g.clear();
-        const wob = 1 + Math.sin(t * 0.006) * 0.08;
-        this.circle(g, 0, 0, 13 * wob, 0xFFC107, 0xF57F17, 2);
-        g.fillStyle(0xFFEB3B, 1); g.fillCircle(0, 0, 10 * wob);
-        g.fillStyle(0xFFF9C4, 0.7); g.fillEllipse(-3, -3, 5, 4);
-        g.lineStyle(2, 0xF57F17, 0.9);
-        g.lineBetween(-1, -5, -1, 5); g.lineBetween(-1, 0, 3, 0); g.lineBetween(3, -4, 3, 4);
-      },
-
-      sky(scene, worldW) {
-        const g = scene.add.graphics().setDepth(0);
-        g.fillGradientStyle(0x42A5F5, 0x42A5F5, 0xBBDEFB, 0xBBDEFB, 1);
-        g.fillRect(0, 0, worldW, CFG.groundY + 20);
-        // солнце
-        g.fillStyle(0xFFF176, 0.35); g.fillCircle(520, 160, 80);
-        g.fillStyle(0xFFEE58, 0.6); g.fillCircle(520, 160, 55);
-        g.fillStyle(0xFDD835, 1); g.fillCircle(520, 160, 38);
-        return g;
-      },
-
-      hills(scene, worldW, color, depth, scroll) {
-        const g = scene.add.graphics().setDepth(depth).setScrollFactor(scroll);
-        g.fillStyle(color, 1);
-        for (let x = -100; x < worldW + 200; x += 160) {
-          const ht = 50 + Math.sin(x * 0.007) * 30 + Math.cos(x * 0.003) * 20;
-          g.fillTriangle(x, CFG.groundY - 10, x + 80, CFG.groundY - 10 - ht, x + 160, CFG.groundY - 10);
-        }
-        return g;
-      },
-
-      ground(scene, worldW) {
-        const g = scene.add.graphics().setDepth(5);
-        g.fillStyle(0x795548, 1); g.fillRect(0, CFG.groundY + 4, worldW, 80);
-        g.fillStyle(0x66BB6A, 1); g.fillRect(0, CFG.groundY - 4, worldW, 12);
-        g.fillStyle(0x4CAF50, 1); g.fillRect(0, CFG.groundY - 4, worldW, 6);
-        for (let x = 0; x < worldW; x += 16) {
-          const bh = 5 + Math.sin(x * 0.07) * 4;
-          g.lineStyle(2, 0x388E3C, 0.75);
-          g.lineBetween(x, CFG.groundY - 4, x + 2, CFG.groundY - 4 - bh);
-        }
-        return g;
-      }
-    };
-
-    // ═══════════════════════════════════════════════════════════
-    // ФИЗИКА — привязка Matter body ↔ Phaser Container
-    // ═══════════════════════════════════════════════════════════
-    function bindBody(scene, body, drawFn, depth = 50) {
-      const container = scene.add.container(body.position.x, body.position.y).setDepth(depth);
-      const gfx = scene.add.graphics();
-      drawFn(gfx);
-      container.add(gfx);
-      scene.matter.add.gameObject(container, body);
-      return { container, gfx, body };
+    // ================================================================
+    // Рисование в текстуры (один раз — потом как спрайты)
+    // ================================================================
+    function bakeTexture(scene, key, w, h, draw) {
+      if (scene.textures.exists(key)) return;
+      const g = scene.make.graphics({ add: false });
+      g.clear();
+      draw(g, w, h);
+      g.generateTexture(key, w, h);
+      g.destroy();
     }
 
-    function grannyBodies(g) {
-      return g ? [g.head.body, g.torso.body, g.legs.body] : [];
+    function registerTextures(scene) {
+      bakeTexture(scene, 'head', 52, 52, (g) => {
+        g.fillStyle(0xb0bec5); g.fillCircle(26, 20, 22);
+        g.fillStyle(0xffccbc); g.fillCircle(26, 26, 19);
+        g.fillStyle(0xffffff); g.fillCircle(20, 24, 5); g.fillCircle(32, 24, 5);
+        g.fillStyle(0x222222); g.fillCircle(21, 24, 2.5); g.fillCircle(33, 24, 2.5);
+        g.lineStyle(2, 0x37474f); g.strokeCircle(20, 24, 7); g.strokeCircle(32, 24, 7);
+        g.lineStyle(2, 0xc62828); g.beginPath(); g.arc(26, 32, 4, 0.3, Math.PI - 0.3); g.strokePath();
+        g.fillStyle(0xd32f2f); g.fillTriangle(12, 16, 40, 16, 26, 28);
+      });
+      bakeTexture(scene, 'torso', 56, 56, (g) => {
+        g.fillStyle(0xec407a); g.fillRoundedRect(10, 8, 36, 40, 8);
+        g.fillStyle(0xad1457); [[18,18],[30,24],[16,32],[34,36]].forEach(([x,y]) => g.fillCircle(x, y, 3));
+        g.fillStyle(0xffccbc); g.fillRoundedRect(2, 16, 10, 22, 4); g.fillRoundedRect(44, 16, 10, 22, 4);
+      });
+      bakeTexture(scene, 'legs', 52, 44, (g) => {
+        g.fillStyle(0x7e57c2); g.fillRoundedRect(4, 2, 18, 26, 4); g.fillRoundedRect(30, 2, 18, 26, 4);
+        g.fillStyle(0x3e2723); g.fillRoundedRect(2, 26, 20, 12, 3); g.fillRoundedRect(28, 26, 20, 12, 3);
+      });
+      bakeTexture(scene, 'cannon', 100, 120, (g) => {
+        g.fillStyle(0x424242); g.fillCircle(22, 100, 16); g.fillCircle(72, 100, 16);
+        g.fillStyle(0x6d4c41); g.fillRoundedRect(8, 82, 84, 20, 5);
+        g.fillStyle(0x546e7a); g.fillRoundedRect(36, 8, 26, 78, 5);
+        g.fillStyle(0xffb300); g.fillCircle(49, 8, 14);
+        g.fillStyle(0x212121); g.fillCircle(49, 8, 6);
+      });
+      bakeTexture(scene, 'tramp', 88, 32, (g) => {
+        g.fillStyle(0x455a64); g.fillRect(0, 22, 88, 8);
+        g.fillStyle(0x00e676); g.fillRoundedRect(4, 8, 80, 14, 4);
+      });
+      bakeTexture(scene, 'fan', 52, 52, (g) => {
+        g.fillStyle(0x607d8b); g.fillRoundedRect(0, 0, 52, 52, 6);
+        g.fillStyle(0xeeeeee); g.fillEllipse(26, 26, 22, 8);
+      });
+      bakeTexture(scene, 'coin', 28, 28, (g) => {
+        g.fillStyle(0xffc107); g.fillCircle(14, 14, 13);
+        g.fillStyle(0xffeb3b); g.fillCircle(14, 14, 10);
+      });
+      bakeTexture(scene, 'crow', 44, 32, (g) => {
+        g.fillStyle(0x212121); g.fillEllipse(18, 18, 28, 16);
+        g.fillStyle(0xff9800); g.fillTriangle(32, 14, 42, 16, 32, 18);
+      });
     }
 
-    function isGrannyLabel(label) {
-      return label && label.startsWith('granny');
-    }
-
-    function setAllVelocity(scene, g, vx, vy) {
-      grannyBodies(g).forEach(b => scene.matter.body.setVelocity(b, { x: vx, y: vy }));
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    // ЗВУК
-    // ═══════════════════════════════════════════════════════════
-    const SFX = {
-      ctx: null,
-      boot() {
-        if (this.ctx) { this.ctx.resume(); return; }
-        try {
-          this.ctx = new (window.AudioContext || window.webkitAudioContext)();
-          this.g = this.ctx.createGain();
-          this.g.gain.value = 0.32;
-          this.g.connect(this.ctx.destination);
-        } catch (e) {}
-      },
-      tone(f, d, type = 'sine', v = 0.2) {
-        const c = this.ctx; if (!c) return;
-        const o = c.createOscillator(), gn = c.createGain();
-        o.type = type; o.frequency.value = f;
-        gn.gain.setValueAtTime(v, c.currentTime);
-        gn.gain.exponentialRampToValueAtTime(0.001, c.currentTime + d);
-        o.connect(gn).connect(this.g);
-        o.start(); o.stop(c.currentTime + d);
-      },
-      shoot() { this.tone(140, 0.12, 'sawtooth', 0.28); this.tone(70, 0.08, 'square', 0.12); },
-      coin() { this.tone(880, 0.07, 'sine', 0.18); setTimeout(() => this.tone(1175, 0.09, 'sine', 0.14), 55); },
-      bounce() { this.tone(180, 0.1, 'triangle', 0.18); },
-      fart() { this.tone(65, 0.28, 'sawtooth', 0.22); },
-      land() { this.tone(90, 0.14, 'square', 0.16); }
-    };
-
-    // ═══════════════════════════════════════════════════════════
-    // СЦЕНЫ
-    // ═══════════════════════════════════════════════════════════
+    // ================================================================
     class BootScene extends Phaser.Scene {
       constructor() { super('Boot'); }
-      create() { this.scene.start('Menu'); }
+      create() {
+        registerTextures(this);
+        this.scene.start('Menu');
+      }
     }
 
     class MenuScene extends Phaser.Scene {
       constructor() { super('Menu'); }
       create() {
-        const { w, h } = CFG;
-        Draw.sky(this, w);
-        Draw.hills(this, w + 100, 0x81C784, 1, 0);
-        Draw.hills(this, w + 100, 0x66BB6A, 2, 0);
-
-        this.add.text(w / 2, 130, 'Бабка на Пушке', {
-          fontFamily: 'Arial', fontSize: '46px', fontStyle: 'bold', color: '#fff',
-          stroke: '#1565C0', strokeThickness: 8
+        this.add.rectangle(W / 2, H / 2, W, H, 0x42a5f5);
+        this.add.text(W / 2, 140, 'Бабка на Пушке', {
+          fontSize: '48px', fontStyle: 'bold', color: '#fff', stroke: '#0d47a1', strokeThickness: 6
         }).setOrigin(0.5);
-
-        const rec = parseInt(localStorage.getItem(STORE.rec) || '0');
-        this.add.text(w / 2, 210, `Рекорд: ${rec} м`, {
-          fontFamily: 'Arial', fontSize: '30px', color: '#FFEE58'
+        this.add.text(W / 2, 220, 'Рекорд: ' + (localStorage.getItem(STORE.rec) || '0') + ' м', {
+          fontSize: '28px', color: '#ffee58'
         }).setOrigin(0.5);
+        this.add.image(W / 2, H * 0.5, 'cannon').setScale(1.2);
+        this.add.image(W / 2, H * 0.38, 'head');
 
-        // превью пушки и бабки
-        const prev = this.add.container(w / 2, h * 0.55);
-        const cg = this.add.graphics(); Draw.cannon(cg); prev.add(cg);
-        const hg = this.add.graphics(); Draw.grannyHead(hg); hg.setPosition(0, -120); prev.add(hg);
-        this.tweens.add({ targets: prev, angle: { from: -8, to: -38 }, duration: 1500, yoyo: true, repeat: -1 });
-
-        const btn = this.add.container(w / 2, h - 180);
-        const bg = this.add.graphics();
-        bg.fillStyle(0x000, 0.2); bg.fillRoundedRect(-135, 18, 270, 68, 14);
-        bg.fillStyle(0x43A047, 1); bg.fillRoundedRect(-135, 14, 270, 68, 14);
-        btn.add(bg);
-        btn.add(this.add.text(0, 46, 'ИГРАТЬ', { fontFamily: 'Arial', fontSize: '34px', color: '#fff', fontStyle: 'bold' }).setOrigin(0.5));
-        btn.setSize(270, 68).setInteractive();
-        btn.on('pointerdown', () => this.scene.start('Game'));
-
-        this.add.text(w / 2, h - 90, 'Потяни от пушки и отпусти', {
-          fontFamily: 'Arial', fontSize: '20px', color: '#B3E5FC'
+        const play = this.add.rectangle(W / 2, H - 180, 260, 70, 0x43a047).setInteractive({ useHandCursor: true });
+        this.add.text(W / 2, H - 180, 'ИГРАТЬ', { fontSize: '32px', color: '#fff', fontStyle: 'bold' }).setOrigin(0.5);
+        play.on('pointerdown', () => this.scene.start('Game'));
+        this.add.text(W / 2, H - 90, 'Тяни пальцем вниз от пушки → отпусти', {
+          fontSize: '18px', color: '#e3f2fd'
         }).setOrigin(0.5);
       }
     }
@@ -348,367 +124,242 @@
       constructor() { super('Game'); }
 
       create() {
-        this.phase = 'aim'; // aim | fly | end
-        this.pull = { dx: 0, dy: 0, power: 0 };
+        this.phase = 'aim';
         this.dragging = false;
+        this.pull = 0;
+        this.pullAng = -Math.PI / 4;
         this.coins = 0;
-        this.fartDone = false;
-        this.onGround = false;
-        this.stallTime = 0;
-        this.hitLock = new Set();
-        this.props = [];
-        this.crows = [];
+        this.fartUsed = false;
+        this.groundHit = false;
+        this.stall = 0;
+        this.flyT = 0;
+        this.cd = new Set();
         this.granny = null;
-        this.flyAt = 0;
 
-        // ── Мир ──
-        Draw.sky(this, CFG.worldW);
-        Draw.hills(this, CFG.worldW, 0x81C784, 1, 0.08);
-        Draw.hills(this, CFG.worldW, 0x66BB6A, 2, 0.15);
-        Draw.ground(this, CFG.worldW);
+        // фон
+        const sky = this.add.graphics().setDepth(0);
+        sky.fillGradientStyle(0x42a5f5, 0x42a5f5, 0xbbe0ff, 0xbbe0ff, 1);
+        sky.fillRect(0, 0, WORLD_W, GY + 60);
+        const grd = this.add.graphics().setDepth(1);
+        grd.fillStyle(0x795548); grd.fillRect(0, GY + 4, WORLD_W, 80);
+        grd.fillStyle(0x66bb6a); grd.fillRect(0, GY - 4, WORLD_W, 10);
 
-        const gBodyY = CFG.groundY + CFG.groundH / 2 - 4;
-        this.matter.add.rectangle(CFG.worldW / 2, gBodyY, CFG.worldW, CFG.groundH, {
-          isStatic: true, label: 'ground', friction: 0.92, restitution: 0.06
+        this.matter.add.rectangle(WORLD_W / 2, GROUND_BODY_Y, WORLD_W, 44, {
+          isStatic: true, label: 'ground', friction: 0.9, restitution: 0.05
         });
 
-        // ── Пушка (статичный контейнер) ──
-        this.cannon = this.add.container(CFG.cannonX, CFG.cannonY).setDepth(40);
-        this.cannonGfx = this.add.graphics();
-        Draw.cannon(this.cannonGfx);
-        this.cannon.add(this.cannonGfx);
-        this.cannon.setAngle(0);
+        // пушка
+        this.cannonSpr = this.add.image(CX, CY, 'cannon').setOrigin(0.45, 0.88).setDepth(30);
+        this.aimGfx = this.add.graphics().setDepth(35);
+        this.props = [];
 
-        this.slingLine = this.add.graphics().setDepth(45);
+        this.buildWorld();
+        this.cameras.main.setBounds(0, 0, WORLD_W, H);
 
-        this.spawnProps();
-        this.cameras.main.setBounds(0, 0, CFG.worldW, CFG.h);
-        this.cameras.main.scrollX = 0;
+        this.lblDist = this.add.text(16, 16, '0 м', {
+          fontSize: '28px', color: '#fff', stroke: '#000', strokeThickness: 4
+        }).setScrollFactor(0).setDepth(100);
+        this.lblCoin = this.add.text(16, 52, '0', {
+          fontSize: '26px', color: '#ffee58', stroke: '#000', strokeThickness: 4
+        }).setScrollFactor(0).setDepth(100);
+        this.lblHint = this.add.text(W / 2, H - 90, '👇 Тяни вниз от пушки', {
+          fontSize: '22px', color: '#fff', stroke: '#000', strokeThickness: 3
+        }).setOrigin(0.5).setScrollFactor(0).setDepth(100);
 
-        // ── HUD ──
-        this.txtDist = this.add.text(20, 24, '0 м', {
-          fontFamily: 'Arial', fontSize: '30px', color: '#fff', stroke: '#000', strokeThickness: 5
-        }).setScrollFactor(0).setDepth(300);
-        this.txtCoin = this.add.text(20, 64, '0 🪙', {
-          fontFamily: 'Arial', fontSize: '28px', color: '#FFEE58', stroke: '#000', strokeThickness: 4
-        }).setScrollFactor(0).setDepth(300);
-        this.txtHint = this.add.text(CFG.w / 2, CFG.h - 100, '👆 Потяни от пушки', {
-          fontFamily: 'Arial', fontSize: '24px', color: '#fff', stroke: '#000', strokeThickness: 4
-        }).setOrigin(0.5).setScrollFactor(0).setDepth(300);
+        this.btnFart = this.add.text(W - 24, H - 80, '💨', { fontSize: '48px' })
+          .setOrigin(1, 0.5).setScrollFactor(0).setDepth(100).setInteractive().setVisible(false);
+        this.btnFart.on('pointerdown', (p, lx, ly, ev) => { if (ev) ev.stopPropagation(); this.fart(); });
 
-        this.btnFart = this.add.container(CFG.w - 100, CFG.h - 110).setScrollFactor(0).setDepth(300).setVisible(false);
-        const fbg = this.add.graphics();
-        fbg.fillStyle(0x000, 0.25); fbg.fillRoundedRect(-62, 18, 124, 58, 12);
-        fbg.fillStyle(0x8E24AA, 1); fbg.fillRoundedRect(-62, 14, 124, 58, 12);
-        this.btnFart.add(fbg);
-        this.btnFart.add(this.add.text(0, 42, 'ПЁРНУТЬ', { fontFamily: 'Arial', fontSize: '18px', color: '#fff', fontStyle: 'bold' }).setOrigin(0.5));
-        this.btnFart.setSize(124, 58).setInteractive();
-        this.btnFart.on('pointerdown', (p) => { p.event.stopPropagation(); this.fart(); });
-
-        this.input.on('pointerdown', this.ptrDown, this);
-        this.input.on('pointermove', this.ptrMove, this);
-        this.input.on('pointerup', this.ptrUp, this);
+        this.input.on('pointerdown', this.onDown, this);
+        this.input.on('pointermove', this.onMove, this);
+        this.input.on('pointerup', this.onUp, this);
         this.matter.world.on('collisionstart', this.onCollide, this);
-
-        localStorage.setItem(STORE.runs, String(parseInt(localStorage.getItem(STORE.runs) || '0') + 1));
       }
 
-      // ── Позиция дула пушки ──
-      muzzleWorld() {
-        const rad = Phaser.Math.DegToRad(this.cannon.angle - 90);
-        return {
-          x: CFG.cannonX + Math.cos(rad) * CFG.barrelLen,
-          y: CFG.cannonY + Math.sin(rad) * CFG.barrelLen
-        };
+      muzzle() {
+        const rad = Phaser.Math.DegToRad(this.cannonSpr.angle - 90);
+        return { x: CX + Math.cos(rad) * BARREL, y: CY + Math.sin(rad) * BARREL };
       }
 
-      toWorld(ptr) {
-        const cam = this.cameras.main;
-        return { x: ptr.x + cam.scrollX, y: ptr.y + cam.scrollY };
+      wpos(p) {
+        const c = this.cameras.main;
+        return { x: p.x + c.scrollX, y: p.y + c.scrollY };
       }
 
-      // ── Создание ragdoll с привязкой визуала ──
-      createGranny(x, y) {
-        const mat = { friction: 0.14, frictionAir: 0.022, restitution: 0.28 };
-
-        const headB = this.matter.add.circle(x, y - 30, 18, { mass: 0.75, label: 'grannyHead', ...mat });
-        const torsoB = this.matter.add.rectangle(x, y + 2, 26, 38, { mass: 1.5, label: 'grannyTorso', ...mat });
-        const legsB = this.matter.add.rectangle(x, y + 34, 30, 24, { mass: 1.7, label: 'grannyLegs', ...mat });
-
-        this.matter.add.constraint(headB, torsoB, 4, 0.85, { stiffness: 0.72, damping: 0.06 });
-        this.matter.add.constraint(torsoB, legsB, 4, 0.85, { stiffness: 0.72, damping: 0.06 });
-
-        const head = bindBody(this, headB, g => Draw.grannyHead(g), 60);
-        const torso = bindBody(this, torsoB, g => Draw.grannyTorso(g), 59);
-        const legs = bindBody(this, legsB, g => Draw.grannyLegs(g), 58);
-
-        return { head, torso, legs };
-      }
-
-      spawnProps() {
-        let x = 550;
-        while (x < CFG.worldW - 350) {
-          const r = Phaser.Math.Between(0, 99);
-          if (r < 20) this.addTramp(x);
-          else if (r < 35) this.addFan(x);
-          else if (r < 48) this.addCrow(x);
-          else if (r < 78) {
-            const n = Phaser.Math.Between(2, 4);
-            for (let i = 0; i < n; i++) this.addCoin(x + i * 38);
-          } else this.addCoin(x);
-          x += Phaser.Math.Between(420, 620);
+      buildWorld() {
+        let x = 500;
+        while (x < WORLD_W - 300) {
+          const r = Phaser.Math.Between(0, 9);
+          if (r < 2) this.addProp('tramp', x, GY - 6);
+          else if (r < 4) this.addProp('fan', x, GY - 80);
+          else if (r < 5) this.addProp('crow', x, 700);
+          else { const n = Phaser.Math.Between(2, 4); for (let i = 0; i < n; i++) this.addProp('coin', x + i * 36, Phaser.Math.Between(GY - 220, GY - 60)); }
+          x += Phaser.Math.Between(380, 580);
         }
       }
 
-      addTramp(x) {
-        const y = CFG.groundY - 8;
-        const b = this.matter.add.rectangle(x, y, 78, 12, { isStatic: true, label: 'tramp', restitution: 1.05 });
-        const o = bindBody(this, b, g => Draw.trampoline(g), 15);
-        o.container.setDepth(15);
-        this.props.push({ kind: 'tramp', body: b, vis: o });
-      }
-
-      addFan(x) {
-        const y = CFG.groundY - 95;
-        const b = this.matter.add.rectangle(x, y, 46, 46, { isStatic: true, label: 'fan' });
-        const o = bindBody(this, b, g => Draw.fan(g, 0), 18);
-        o.container.setDepth(18);
-        this.props.push({ kind: 'fan', body: b, vis: o, x, y });
-      }
-
-      addCrow(x) {
-        const y = 720;
-        const b = this.matter.add.circle(x, y, 15, { isStatic: true, label: 'crow' });
-        const o = bindBody(this, b, g => Draw.crow(g, 0), 22);
-        o.container.setDepth(22);
-        const crow = { b, vis: o, x0: x, t0: this.time.now };
-        this.crows.push(crow);
-        this.props.push({ kind: 'crow', body: b, vis: o, crow });
-      }
-
-      addCoin(x, y) {
-        y = y || Phaser.Math.Between(CFG.groundY - 260, CFG.groundY - 70);
-        const b = this.matter.add.circle(x, y, 13, { isStatic: true, isSensor: true, label: 'coin' });
-        const o = bindBody(this, b, g => Draw.coin(g, 0), 20);
-        o.container.setDepth(20);
-        this.props.push({ kind: 'coin', body: b, vis: o, taken: false });
-      }
-
-      // ── Управление (слингшот) ──
-      ptrDown(ptr) {
-        SFX.boot();
-        if (this.phase === 'fly') {
-          if (this.btnFart.visible) {
-            const b = this.btnFart.getBounds();
-            if (b.contains(ptr.x, ptr.y)) return;
-          }
-          this.fart();
-          return;
+      addProp(kind, x, y) {
+        let body, spr;
+        if (kind === 'tramp') {
+          body = this.matter.add.rectangle(x, y, 80, 12, { isStatic: true, label: 'tramp', restitution: 1.1 });
+          spr = this.add.image(x, y, 'tramp').setDepth(15);
+        } else if (kind === 'fan') {
+          body = this.matter.add.rectangle(x, y, 48, 48, { isStatic: true, label: 'fan' });
+          spr = this.add.image(x, y, 'fan').setDepth(15);
+        } else if (kind === 'crow') {
+          body = this.matter.add.circle(x, y, 14, { isStatic: true, label: 'crow' });
+          spr = this.add.image(x, y, 'crow').setDepth(18);
+        } else {
+          body = this.matter.add.circle(x, y, 14, { isStatic: true, isSensor: true, label: 'coin' });
+          spr = this.add.image(x, y, 'coin').setDepth(16);
         }
-        if (this.phase !== 'aim') return;
-        const w = this.toWorld(ptr);
-        const m = this.muzzleWorld();
-        if (Phaser.Math.Distance.Between(w.x, w.y, m.x, m.y) < 380) {
-          this.dragging = true;
-          this.txtHint.setVisible(false);
-        }
+        this.props.push({ kind, body, spr, x, y, got: false, t0: this.time.now });
       }
 
-      ptrMove(ptr) {
+      spawnGranny(x, y) {
+        const o = { friction: 0.12, frictionAir: 0.02, restitution: 0.3 };
+        const head = this.matter.add.circle(x, y - 28, 17, { mass: 0.8, label: 'grannyH', ...o });
+        const torso = this.matter.add.rectangle(x, y + 2, 24, 36, { mass: 1.5, label: 'grannyT', ...o });
+        const legs = this.matter.add.rectangle(x, y + 32, 28, 22, { mass: 1.7, label: 'grannyL', ...o });
+        this.matter.add.constraint(head, torso, 4, 0.9, { stiffness: 0.7, damping: 0.05 });
+        this.matter.add.constraint(torso, legs, 4, 0.9, { stiffness: 0.7, damping: 0.05 });
+
+        const sH = this.add.image(x, y, 'head').setDepth(50);
+        const sT = this.add.image(x, y, 'torso').setDepth(49);
+        const sL = this.add.image(x, y, 'legs').setDepth(48);
+        return { head, torso, legs, sH, sT, sL };
+      }
+
+      parts(g) { return g ? [g.head, g.torso, g.legs] : []; }
+      syncGranny() {
+        if (!this.granny) return;
+        const g = this.granny;
+        const map = [[g.head, g.sH], [g.torso, g.sT], [g.legs, g.sL]];
+        map.forEach(([b, s]) => {
+          s.setPosition(b.position.x, b.position.y).setRotation(b.angle);
+          s.setDepth(40 + (b.position.y | 0));
+        });
+      }
+
+      onDown(p) {
+        if (this.phase === 'end') return;
+        if (this.phase === 'fly') { this.fart(); return; }
+        this.dragging = true;
+        this.lblHint.setVisible(false);
+        this.onMove(p);
+      }
+
+      onMove(p) {
         if (!this.dragging || this.phase !== 'aim') return;
-        const w = this.toWorld(ptr);
-        const m = this.muzzleWorld();
+        const w = this.wpos(p);
+        const m = this.muzzle();
         let dx = m.x - w.x, dy = m.y - w.y;
-        const dist = Math.min(Math.hypot(dx, dy), CFG.maxPull);
-        if (dist < 12) {
-          this.pull = { dx: 0, dy: 0, power: 0, ang: 0 };
-          this.slingLine.clear();
-          return;
-        }
+        let dist = Math.min(Math.hypot(dx, dy), MAX_PULL);
+        if (dist < 8) { this.pull = 0; this.aimGfx.clear(); return; }
         const ang = Math.atan2(dy, dx);
-        dx = Math.cos(ang) * dist;
-        dy = Math.sin(ang) * dist;
-        this.pull = { dx, dy, power: dist / CFG.maxPull, ang };
+        this.pull = dist / MAX_PULL;
+        this.pullAng = ang;
+        this.cannonSpr.setAngle(Phaser.Math.RadToDeg(ang) + 90);
 
-        // поворот пушки к направлению выстрела
-        const fireDeg = Phaser.Math.RadToDeg(ang);
-        this.cannon.setAngle(fireDeg + 90);
-
-        this.drawSling(m, { x: m.x + dx, y: m.y + dy });
+        const fx = m.x + Math.cos(ang) * dist;
+        const fy = m.y + Math.sin(ang) * dist;
+        const g = this.aimGfx;
+        g.clear();
+        g.lineStyle(5, 0xff6f00, 1); g.lineBetween(m.x, m.y, fx, fy);
+        g.fillStyle(0xff6f00, 1); g.fillCircle(fx, fy, 10);
+        g.fillStyle(0x000000, 0.4); g.fillRoundedRect(CX - 65, CY - 50, 130, 14, 5);
+        const col = this.pull < 0.5 ? 0x66bb6a : this.pull < 0.8 ? 0xffca28 : 0xef5350;
+        g.fillStyle(col, 1); g.fillRoundedRect(CX - 65, CY - 50, 130 * this.pull, 14, 5);
       }
 
-      ptrUp() {
+      onUp() {
         if (!this.dragging || this.phase !== 'aim') return;
         this.dragging = false;
-        if (this.pull.power < 0.07) return;
-        this.launch();
+        if (this.pull < 0.05) { this.aimGfx.clear(); return; }
+        this.fire();
       }
 
-      drawSling(m, finger) {
-        const g = this.slingLine;
-        g.clear();
-        const p = this.pull.power;
-        if (p < 0.02) return;
-
-        // резинка
-        g.lineStyle(5, 0xFF6F00, 0.95);
-        g.lineBetween(m.x, m.y, finger.x, finger.y);
-        g.fillStyle(0xFF6F00, 1);
-        g.fillCircle(finger.x, finger.y, 11);
-        g.lineStyle(2, 0xFFFFFF, 0.6);
-        g.strokeCircle(finger.x, finger.y, 11);
-
-        // шкала силы над пушкой
-        const bx = CFG.cannonX, by = CFG.cannonY - 55, bw = 130, bh = 16;
-        g.fillStyle(0x000000, 0.45);
-        g.fillRoundedRect(bx - bw / 2, by, bw, bh, 6);
-        const col = p < 0.45 ? 0x66BB6A : p < 0.75 ? 0xFFCA28 : 0xEF5350;
-        g.fillStyle(col, 1);
-        g.fillRoundedRect(bx - bw / 2, by, bw * p, bh, 6);
-      }
-
-      launch() {
+      fire() {
         this.phase = 'fly';
-        this.slingLine.clear();
-        this.onGround = false;
-        this.stallTime = 0;
-        this.flyAt = this.time.now;
+        this.aimGfx.clear();
+        this.groundHit = false;
+        this.stall = 0;
+        this.flyT = this.time.now;
+        this.fartUsed = false;
 
-        const m = this.muzzleWorld();
-        const spd = CFG.minSpd + (CFG.maxSpd - CFG.minSpd) * this.pull.power;
-        const vx = Math.cos(this.pull.ang) * spd;
-        const vy = Math.sin(this.pull.ang) * spd;
+        const m = this.muzzle();
+        const spd = 20 + this.pull * 30;
+        const vx = Math.cos(this.pullAng) * spd;
+        const vy = Math.sin(this.pullAng) * spd;
 
-        this.granny = this.createGranny(m.x, m.y);
-        setAllVelocity(this, this.granny, vx, vy);
+        this.granny = this.spawnGranny(m.x, m.y);
+        this.parts(this.granny).forEach(b => this.matter.body.setVelocity(b, { x: vx, y: vy }));
 
-        SFX.shoot();
-        this.cameras.main.shake(90, 0.004);
-
-        // отдача пушки
-        this.tweens.add({
-          targets: this.cannon,
-          x: CFG.cannonX - Math.cos(this.pull.ang) * 12,
-          y: CFG.cannonY - Math.sin(this.pull.ang) * 12,
-          duration: 70, yoyo: true
-        });
-
-        // вспышка
-        const flash = this.add.circle(m.x, m.y, 22, 0xFFEE58, 0.95).setDepth(70);
-        this.tweens.add({ targets: flash, alpha: 0, scale: 2.2, duration: 140, onComplete: () => flash.destroy() });
-
-        this.cameras.main.startFollow(this.granny.torso.container, true, 0.1, 0.1, 0, -90);
-        this.cameras.main.setDeadzone(200, 350);
+        this.add.circle(m.x, m.y, 16, 0xffee58, 0.9).setDepth(60)
+          .setScale(1).setAlpha(1);
+        this.cameras.main.startFollow(this.granny.sT, true, 0.1, 0.1, 0, -80);
         this.btnFart.setVisible(true);
       }
 
       fart() {
-        if (this.phase !== 'fly' || this.fartDone || !this.granny) return;
-        this.fartDone = true;
+        if (this.phase !== 'fly' || this.fartUsed || !this.granny) return;
+        this.fartUsed = true;
         this.btnFart.setVisible(false);
-
-        const t = this.granny.torso.body;
-        const spd = Math.hypot(t.velocity.x, t.velocity.y) || 1;
-        const boost = 16;
-        const ax = (t.velocity.x / spd) * boost;
-        const ay = (t.velocity.y / spd) * boost;
-
-        grannyBodies(this.granny).forEach((b, i) => {
-          const k = i === 2 ? 1.25 : 1;
-          this.matter.body.setVelocity(b, {
-            x: b.velocity.x + ax * k,
-            y: b.velocity.y + ay * k - 0.8
-          });
+        const t = this.granny.torso;
+        const sp = Math.hypot(t.velocity.x, t.velocity.y) || 1;
+        const bx = (t.velocity.x / sp) * 14, by = (t.velocity.y / sp) * 14;
+        this.parts(this.granny).forEach((b, i) => {
+          const k = i === 2 ? 1.2 : 1;
+          this.matter.body.setVelocity(b, { x: b.velocity.x + bx * k, y: b.velocity.y + by * k - 1 });
         });
-
-        SFX.fart();
-        this.cameras.main.shake(100, 0.006);
-        const p = this.granny.legs.body.position;
-        for (let i = 0; i < 5; i++) {
-          const c = this.add.circle(p.x, p.y, 10, 0xA5D6A7, 0.75).setDepth(65);
-          this.tweens.add({
-            targets: c, alpha: 0, scale: 2.8,
-            x: p.x - 20 - i * 8, y: p.y + 10 + i * 6,
-            duration: 450, delay: i * 40, onComplete: () => c.destroy()
-          });
-        }
+        const p = this.granny.legs.position;
+        this.add.circle(p.x, p.y, 14, 0xc8e6c9, 0.7).setDepth(55);
       }
 
       onCollide(ev) {
         if (!this.granny) return;
         ev.pairs.forEach(({ bodyA, bodyB }) => {
-          const lbs = [bodyA.label, bodyB.label];
-          const part = isGrannyLabel(bodyA.label) ? bodyA : isGrannyLabel(bodyB.label) ? bodyB : null;
-          if (!part) return;
-          const other = part === bodyA ? bodyB : bodyA;
-          const oid = other.id + (other.label || '');
+          const la = bodyA.label, lb = bodyB.label;
+          const gp = (la && la.startsWith('granny')) ? bodyA : (lb && lb.startsWith('granny')) ? bodyB : null;
+          if (!gp) return;
+          const ob = gp === bodyA ? bodyB : bodyA;
+          const id = ob.id + ob.label;
 
-          if (lbs.includes('ground')) {
-            this.onGround = true;
-            if (part.velocity.y > 5) {
-              SFX.land();
-              this.cameras.main.shake(120, 0.007);
-            }
+          if (la === 'ground' || lb === 'ground') this.groundHit = true;
+
+          if ((la === 'tramp' || lb === 'tramp') && !this.cd.has(id)) {
+            this.cd.add(id); this.time.delayedCall(300, () => this.cd.delete(id));
+            this.parts(this.granny).forEach(b => this.matter.body.setVelocity(b, { x: b.velocity.x * 1.05, y: -14 }));
           }
-
-          if (lbs.includes('tramp') && !this.hitLock.has(oid)) {
-            this.hitLock.add(oid);
-            this.time.delayedCall(350, () => this.hitLock.delete(oid));
-            grannyBodies(this.granny).forEach(b => {
-              this.matter.body.setVelocity(b, { x: b.velocity.x * 1.08, y: -15 });
-            });
-            SFX.bounce();
-            const pr = this.props.find(p => p.body === other);
-            if (pr) this.tweens.add({ targets: pr.vis.container, scaleY: 0.65, duration: 90, yoyo: true });
+          if ((la === 'fan' || lb === 'fan') && !this.cd.has(id)) {
+            this.cd.add(id); this.time.delayedCall(200, () => this.cd.delete(id));
+            this.parts(this.granny).forEach(b => this.matter.body.setVelocity(b, { x: b.velocity.x + 4, y: b.velocity.y - 6 }));
           }
-
-          if (lbs.includes('fan') && !this.hitLock.has(oid)) {
-            this.hitLock.add(oid);
-            this.time.delayedCall(250, () => this.hitLock.delete(oid));
-            grannyBodies(this.granny).forEach(b => {
-              this.matter.body.setVelocity(b, { x: b.velocity.x + 5, y: b.velocity.y - 7 });
-            });
-            SFX.bounce();
+          if ((la === 'crow' || lb === 'crow') && !this.cd.has(id)) {
+            this.cd.add(id); this.time.delayedCall(400, () => this.cd.delete(id));
+            const a = Math.random() * 6.28;
+            this.parts(this.granny).forEach(b => this.matter.body.setVelocity(b, { x: b.velocity.x + Math.cos(a) * 4, y: b.velocity.y + Math.sin(a) * 4 }));
           }
-
-          if (lbs.includes('crow') && !this.hitLock.has(oid)) {
-            this.hitLock.add(oid);
-            this.time.delayedCall(400, () => this.hitLock.delete(oid));
-            const a = Math.random() * Math.PI * 2;
-            grannyBodies(this.granny).forEach(b => {
-              this.matter.body.setVelocity(b, { x: b.velocity.x + Math.cos(a) * 5, y: b.velocity.y + Math.sin(a) * 5 });
-            });
-          }
-
-          if (lbs.includes('coin')) {
-            const coinB = bodyA.label === 'coin' ? bodyA : bodyB;
-            const pr = this.props.find(p => p.kind === 'coin' && p.body === coinB && !p.taken);
-            if (pr && !this.hitLock.has(oid)) {
-              this.hitLock.add(oid);
-              pr.taken = true;
+          if (la === 'coin' || lb === 'coin') {
+            const coinB = la === 'coin' ? bodyA : bodyB;
+            const pr = this.props.find(p => p.kind === 'coin' && p.body === coinB && !p.got);
+            if (pr && !this.cd.has(id)) {
+              this.cd.add(id); pr.got = true;
               this.coins += 10;
-              this.txtCoin.setText(this.coins + ' 🪙');
-              SFX.coin();
-              const pos = pr.vis.container;
-              const pop = this.add.text(pos.x, pos.y - 25, '+10', {
-                fontSize: '26px', color: '#FFEE58', stroke: '#000', strokeThickness: 4
-              }).setOrigin(0.5).setDepth(80);
-              this.tweens.add({ targets: pop, y: pop.y - 55, alpha: 0, duration: 650, onComplete: () => pop.destroy() });
-              this.tweens.add({
-                targets: pr.vis.container, alpha: 0, scale: 1.6, duration: 180,
-                onComplete: () => { pr.vis.container.destroy(); this.matter.world.remove(pr.body); }
-              });
+              this.lblCoin.setText(this.coins + ' 🪙');
+              pr.spr.destroy();
+              this.matter.world.remove(pr.body);
+              this.add.text(pr.x, pr.y - 20, '+10', { fontSize: '22px', color: '#ffee58', stroke: '#000', strokeThickness: 3 }).setOrigin(0.5).setDepth(60);
             }
           }
         });
       }
 
-      distanceM() {
-        if (!this.granny) return 0;
-        return Math.max(0, (this.granny.torso.body.position.x - CFG.cannonX) / 10);
+      distM() {
+        return this.granny ? Math.max(0, (this.granny.torso.position.x - CX) / 10) : 0;
       }
 
-      finish() {
+      endRun() {
         if (this.phase === 'end') return;
         this.phase = 'end';
         this.matter.world.pause();
@@ -716,125 +367,66 @@
         this.btnFart.setVisible(false);
         this.matter.world.off('collisionstart', this.onCollide, this);
 
-        const dist = Math.floor(this.distanceM());
-        const total = dist + this.coins;
+        const d = Math.floor(this.distM());
         const old = parseInt(localStorage.getItem(STORE.rec) || '0');
-        const record = dist > old;
-        if (record) localStorage.setItem(STORE.rec, String(dist));
+        if (d > old) localStorage.setItem(STORE.rec, String(d));
 
-        const cx = CFG.w / 2, cy = CFG.h / 2;
-        this.add.rectangle(cx, cy, CFG.w, CFG.h, 0x000000, 0.72).setScrollFactor(0).setDepth(400);
+        this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.75).setScrollFactor(0).setDepth(200);
+        this.add.text(W / 2, H / 2 - 120, 'Итог', { fontSize: '40px', color: '#fff', fontStyle: 'bold' }).setOrigin(0.5).setScrollFactor(0).setDepth(201);
+        this.add.text(W / 2, H / 2 - 40, d + ' м  |  🪙 ' + this.coins, { fontSize: '28px', color: '#fff' }).setOrigin(0.5).setScrollFactor(0).setDepth(201);
 
-        const panel = this.add.graphics().setScrollFactor(0).setDepth(401);
-        panel.fillStyle(0x000, 0.18); panel.fillRoundedRect(cx - 204, cy - 254, 408, 508, 18);
-        panel.fillStyle(0xFFFFFF, 1); panel.fillRoundedRect(cx - 210, cy - 260, 420, 520, 18);
+        const again = this.add.rectangle(W / 2, H / 2 + 60, 240, 56, 0x43a047).setScrollFactor(0).setDepth(201).setInteractive();
+        this.add.text(W / 2, H / 2 + 60, 'Ещё раз', { fontSize: '24px', color: '#fff' }).setOrigin(0.5).setScrollFactor(0).setDepth(202);
+        again.on('pointerdown', () => this.scene.restart());
 
-        this.add.text(cx, cy - 190, 'Итог', { fontFamily: 'Arial', fontSize: '42px', fontStyle: 'bold', color: '#263238' }).setOrigin(0.5).setScrollFactor(0).setDepth(402);
-        this.add.text(cx, cy - 110, `Дальность: ${dist} м${record ? '  🏆' : ''}`, { fontSize: '28px', color: '#37474F' }).setOrigin(0.5).setScrollFactor(0).setDepth(402);
-        this.add.text(cx, cy - 60, `Монеты: ${this.coins}`, { fontSize: '26px', color: '#37474F' }).setOrigin(0.5).setScrollFactor(0).setDepth(402);
-        this.add.text(cx, cy - 10, `Счёт: ${total}`, { fontSize: '32px', fontStyle: 'bold', color: '#E53935' }).setOrigin(0.5).setScrollFactor(0).setDepth(402);
-        this.add.text(cx, cy + 40, Phaser.Utils.Array.GetRandom(['Бабка-звезда!', 'Внучок, я улетела!', 'Костей не соберёшь!', 'Ой, спина!']), {
-          fontSize: '20px', fontStyle: 'italic', color: '#78909C'
-        }).setOrigin(0.5).setScrollFactor(0).setDepth(402);
-
-        this.mkBtn(cx, cy + 110, 'Ещё раз', 0x43A047, () => this.scene.restart());
-        this.mkBtn(cx, cy + 185, 'Меню', 0x1E88E5, () => this.scene.start('Menu'));
-        this.mkBtn(cx, cy + 260, 'Поделиться', 0xFB8C00, () => {
-          try { YaGames.share({ title: `Бабка пролетела ${dist} м!`, text: 'Побей рекорд!', url: location.href }); } catch (e) {}
-        });
-      }
-
-      mkBtn(x, y, label, color, fn) {
-        const c = this.add.container(x, y).setScrollFactor(0).setDepth(402);
-        const g = this.add.graphics();
-        g.fillStyle(color, 1); g.fillRoundedRect(-150, -26, 300, 52, 10);
-        c.add(g);
-        c.add(this.add.text(0, 0, label, { fontFamily: 'Arial', fontSize: '24px', color: '#fff' }).setOrigin(0.5));
-        c.setSize(300, 52).setInteractive();
-        c.on('pointerdown', fn);
+        const menu = this.add.rectangle(W / 2, H / 2 + 140, 240, 56, 0x1e88e5).setScrollFactor(0).setDepth(201).setInteractive();
+        this.add.text(W / 2, H / 2 + 140, 'Меню', { fontSize: '24px', color: '#fff' }).setOrigin(0.5).setScrollFactor(0).setDepth(202);
+        menu.on('pointerdown', () => this.scene.start('Menu'));
       }
 
       update(time) {
-        // вороны
-        this.crows.forEach(c => {
-          const y = 720 + Math.sin((time - c.t0) / 380) * 48;
-          const flap = Math.sin(time / 70) * 10;
-          this.matter.body.setPosition(c.b, { x: c.x0, y });
-          Draw.crow(c.vis.gfx, flap);
-        });
-
-        // вентиляторы — анимация + постоянная тяга рядом
-        this.props.filter(p => p.kind === 'fan').forEach(p => {
-          Draw.fan(p.vis.gfx, time / 55);
-          if (this.phase === 'fly' && this.granny) {
-            const bx = this.granny.torso.body.position.x;
-            const by = this.granny.torso.body.position.y;
-            if (Math.abs(bx - p.x) < 55 && Math.abs(by - p.y) < 70) {
-              grannyBodies(this.granny).forEach(b => {
-                this.matter.body.setVelocity(b, { x: b.velocity.x + 0.12, y: b.velocity.y - 0.18 });
-              });
-            }
+        this.props.forEach(p => {
+          if (p.kind === 'crow') {
+            const ny = 700 + Math.sin((time - p.t0) / 350) * 40;
+            this.matter.body.setPosition(p.body, { x: p.x, y: ny });
+            p.spr.setPosition(p.x, ny);
           }
+          if (p.kind === 'fan') p.spr.setAngle(time / 30);
+          if (p.kind === 'coin' && !p.got) p.spr.setY(p.y + Math.sin(time / 200) * 4);
         });
 
-        // монеты
-        this.props.filter(p => p.kind === 'coin' && !p.taken).forEach(p => Draw.coin(p.vis.gfx, time));
-
-        // глубина бабки по Y
         if (this.granny) {
-          const y = this.granny.torso.body.position.y;
-          this.granny.head.container.setDepth(60 + Math.floor(y / 20));
-          this.granny.torso.container.setDepth(59 + Math.floor(y / 20));
-          this.granny.legs.container.setDepth(58 + Math.floor(y / 20));
-
-          this.txtDist.setText(Math.floor(this.distanceM()) + ' м');
+          this.syncGranny();
+          this.lblDist.setText(Math.floor(this.distM()) + ' м');
 
           if (this.phase === 'fly') {
-            const tx = this.granny.torso.body.position.x;
-            const ty = this.granny.torso.body.position.y;
-            if (tx > CFG.worldW - 180 || ty < -250) { this.finish(); return; }
+            const tx = this.granny.torso.position.x;
+            const ty = this.granny.torso.position.y;
+            if (tx > WORLD_W - 150 || ty < -200) { this.endRun(); return; }
 
-            if (this.onGround) {
-              const parts = grannyBodies(this.granny);
-              const avg = parts.reduce((s, b) => s + Math.hypot(b.velocity.x, b.velocity.y), 0) / parts.length;
-              if (avg < 0.35 && (time - this.flyAt) > 500) {
-                this.stallTime += this.game.loop.delta;
-                if (this.stallTime > 850) this.finish();
-              } else if (avg > 1.5) {
-                this.stallTime = 0;
-              }
-              // отскочила снова
-              if (ty < CFG.groundY - 50 && this.granny.torso.body.velocity.y < -0.5) {
-                this.onGround = false;
-                this.stallTime = 0;
-              }
+            if (this.groundHit) {
+              const avg = this.parts(this.granny).reduce((s, b) => s + Math.hypot(b.velocity.x, b.velocity.y), 0) / 3;
+              if (avg < 0.4 && time - this.flyT > 400) {
+                this.stall += this.game.loop.delta;
+                if (this.stall > 700) this.endRun();
+              } else if (avg > 1.2) this.stall = 0;
+              if (ty < GY - 40 && this.granny.torso.velocity.y < 0) { this.groundHit = false; this.stall = 0; }
             }
           }
         }
-
-        const cam = this.cameras.main;
-        cam.scrollX = Phaser.Math.Clamp(cam.scrollX, 0, CFG.worldW - CFG.w);
+        this.cameras.main.scrollX = Phaser.Math.Clamp(this.cameras.main.scrollX, 0, WORLD_W - W);
       }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    // ЗАПУСК
-    // ═══════════════════════════════════════════════════════════
     new Phaser.Game({
       type: Phaser.AUTO,
-      width: CFG.w,
-      height: CFG.h,
+      width: W, height: H,
       parent: 'game-container',
-      backgroundColor: '#42A5F5',
+      backgroundColor: '#42a5f5',
       scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
       physics: {
         default: 'matter',
-        matter: {
-          gravity: { y: CFG.gravity },
-          enableSleeping: false,
-          positionIterations: 10,
-          velocityIterations: 8
-        }
+        matter: { gravity: { y: 1.1 }, enableSleeping: false }
       },
       scene: [BootScene, MenuScene, GameScene]
     });
