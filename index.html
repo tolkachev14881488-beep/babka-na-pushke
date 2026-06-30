@@ -1,0 +1,878 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Бабка на Пушке</title>
+  <!-- Заглушка YaGames до подключения SDK -->
+  <script>
+    window.YaGames = window.YaGames || {
+      _isStub: true,
+      init() {
+        return Promise.resolve({ adv: this.adv, getPlayer: this.getPlayer });
+      },
+      share(params) {
+        console.log('Share:', params);
+        alert('Поделиться: ' + (params && params.title ? params.title : ''));
+      },
+      adv: {
+        showRewardedVideo() {
+          return new Promise((resolve) => {
+            alert('Реклама просмотрена');
+            resolve();
+          });
+        },
+        showFullscreenAdv() { console.log('Полноэкранная реклама (заглушка)'); }
+      },
+      getPlayer() {
+        return Promise.resolve({
+          setStats(data) { console.log('setStats:', data); },
+          getStats() { return Promise.resolve({ meters: 0 }); }
+        });
+      }
+    };
+  </script>
+  <script src="https://yastatic.net/s3/games-sdk/static/v1/games-sdk.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #1a1a2e;
+      touch-action: none;
+    }
+    #game-container {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+  </style>
+</head>
+<body>
+  <div id="game-container"></div>
+
+  <script>
+    // Инициализация Яндекс SDK (не блокирует игру)
+    if (window.YaGames && window.YaGames.init) {
+      window.YaGames.init().catch(() => {});
+    }
+
+    // ============================================================
+    // Звуки-заглушки
+    // ============================================================
+    const SoundFX = {
+      _ctx: null,
+      _getCtx() {
+        if (!this._ctx) {
+          try {
+            this._ctx = new (window.AudioContext || window.webkitAudioContext)();
+          } catch (e) { /* без звука */ }
+        }
+        return this._ctx;
+      },
+      _beep(freq, duration) {
+        const ctx = this._getCtx();
+        if (!ctx) return;
+        try {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.frequency.value = freq;
+          gain.gain.value = 0.1;
+          osc.start();
+          osc.stop(ctx.currentTime + duration);
+        } catch (e) { /* ignore */ }
+      },
+      shoot() { console.log('ЗДЕСЬ БУДЕТ ЗВУК: выстрел'); this._beep(200, 0.15); },
+      fart()  { console.log('ЗДЕСЬ БУДЕТ ЗВУК: пердёж'); this._beep(80, 0.2); },
+      coin()  { console.log('ЗДЕСЬ БУДЕТ ЗВУК: монета'); this._beep(880, 0.1); }
+    };
+
+    // ============================================================
+    // Глобальные утилиты
+    // ============================================================
+    const STORAGE = {
+      RECORD: 'grannyRecord',
+      RUN_COUNT: 'grannyRunCount'
+    };
+
+    const STYLE_PHRASES = [
+      'Бабка-звезда!',
+      'Внучок, я улетела!',
+      'Костей не соберёшь!',
+      'Бабка в шоке!',
+      'Это был полёт!',
+      'Бабушка — ракета!',
+      'Ой, спина!',
+      'Внук, не рассказывай!'
+    ];
+
+    /** Проверка: тело принадлежит бабке */
+    function isGrannyPart(body) {
+      return body && body.label && body.label.startsWith('granny');
+    }
+
+    /** Получить все Matter-тела бабки */
+    function getGrannyBodies(granny) {
+      if (!granny) return [];
+      return [granny.head, granny.body, granny.legs];
+    }
+
+    /** Применить импульс ко всем частям бабки */
+    function applyImpulseToGranny(scene, granny, fx, fy) {
+      getGrannyBodies(granny).forEach((b) => {
+        scene.matter.body.applyForce(b, b.position, { x: fx, y: fy });
+      });
+    }
+
+    /** Установить скорость всем частям бабки */
+    function setGrannyVelocity(scene, granny, vx, vy) {
+      getGrannyBodies(granny).forEach((b) => {
+        scene.matter.body.setVelocity(b, { x: vx, y: vy });
+      });
+    }
+
+    // ============================================================
+    // BootScene — мгновенный переход в меню
+    // ============================================================
+    class BootScene extends Phaser.Scene {
+      constructor() { super('BootScene'); }
+
+      preload() {
+        // Внешних ассетов нет — загрузка не нужна
+      }
+
+      create() {
+        this.scene.start('MenuScene');
+      }
+    }
+
+    // ============================================================
+    // MenuScene — главное меню
+    // ============================================================
+    class MenuScene extends Phaser.Scene {
+      constructor() { super('MenuScene'); }
+
+      create() {
+        const { width, height } = this.cameras.main;
+
+        // Фон
+        this.add.rectangle(width / 2, height / 2, width, height, 0x1a1a2e);
+
+        // Заголовок
+        this.add.text(width / 2, 200, 'Бабка на Пушке', {
+          fontFamily: 'Arial',
+          fontSize: '60px',
+          color: '#ffffff',
+          align: 'center'
+        }).setOrigin(0.5);
+
+        // Рекорд из localStorage
+        const record = parseInt(localStorage.getItem(STORAGE.RECORD) || '0', 10);
+        this.add.text(width / 2, 320, `Лучший рекорд: ${record} м`, {
+          fontFamily: 'Arial',
+          fontSize: '32px',
+          color: '#cccccc'
+        }).setOrigin(0.5);
+
+        // Кнопка «ИГРАТЬ»
+        this._createButton(width / 2, height / 2, 280, 80, 0x44aa44, 'ИГРАТЬ', () => {
+          this.scene.start('GameScene');
+        });
+      }
+
+      /** Создать интерактивную кнопку */
+      _createButton(x, y, w, h, color, label, callback) {
+        const btn = this.add.rectangle(x, y, w, h, color).setInteractive({ useHandCursor: true });
+        const txt = this.add.text(x, y, label, {
+          fontFamily: 'Arial',
+          fontSize: '36px',
+          color: '#ffffff'
+        }).setOrigin(0.5);
+
+        btn.on('pointerover', () => btn.setFillStyle(color, 0.85));
+        btn.on('pointerout', () => btn.setFillStyle(color, 1));
+        btn.on('pointerdown', callback);
+        return { btn, txt };
+      }
+    }
+
+    // ============================================================
+    // GameScene — основной геймплей
+    // ============================================================
+    class GameScene extends Phaser.Scene {
+      constructor() { super('GameScene'); }
+
+      create() {
+        // --- Состояние забега ---
+        this.granny = null;
+        this.isCharging = false;
+        this.isFlying = false;
+        this.isGameOver = false;
+        this.chargeStartTime = 0;
+        this.chargeProgress = 0;
+        this.cannonAngleDeg = 45;
+        this.totalCoins = 0;
+        this.bestDistance = 0;
+        this.fartUsed = false;
+        this.groundTouched = false;
+        this.stallTimer = 0;
+        this.worldObjects = [];
+        this.crows = [];
+
+        // Размер мира
+        this.worldWidth = 8000;
+        this.worldHeight = 1280;
+
+        // Небо
+        this.add.rectangle(this.worldWidth / 2, this.worldHeight / 2, this.worldWidth, this.worldHeight, 0x87ceeb);
+
+        // Земля — статичный Matter-прямоугольник
+        const groundY = 1240;
+        const groundH = 40;
+        this.matter.add.rectangle(this.worldWidth / 2, groundY, this.worldWidth, groundH, {
+          isStatic: true,
+          label: 'ground',
+          friction: 0.8
+        });
+        this.add.rectangle(this.worldWidth / 2, groundY, this.worldWidth, groundH, 0x5a8f3a);
+
+        // Пушка
+        this.cannonX = 150;
+        this.cannonY = 1140;
+        this.cannon = this.add.rectangle(this.cannonX, this.cannonY, 50, 100, 0x8B4513);
+        this.cannon.setOrigin(0.2, 0.85);
+        this.cannon.setRotation(Phaser.Math.DegToRad(-this.cannonAngleDeg));
+
+        // Полоска силы
+        this.forceBar = this.add.graphics();
+        this.forceBar.setVisible(false);
+
+        // Генерация мира
+        this.generateWorld();
+
+        // Камера
+        this.cameras.main.setBounds(0, 0, this.worldWidth, this.worldHeight);
+        this.cameras.main.setScroll(0, 0);
+
+        // UI (фиксирован к камере)
+        this._createHUD();
+
+        // Кнопка «Пёрнуть»
+        this.fartBtn = this.add.rectangle(620, 1180, 160, 60, 0xaa44aa)
+          .setScrollFactor(0)
+          .setInteractive()
+          .setVisible(false);
+        this.fartBtnText = this.add.text(620, 1180, 'Пёрнуть', {
+          fontFamily: 'Arial', fontSize: '24px', color: '#fff'
+        }).setOrigin(0.5).setScrollFactor(0).setVisible(false);
+
+        this.fartBtn.on('pointerdown', () => this._doFart());
+
+        // Управление
+        this.input.on('pointerdown', this._onPointerDown, this);
+        this.input.on('pointermove', this._onPointerMove, this);
+        this.input.on('pointerup',   this._onPointerUp,   this);
+
+        // Столкновения
+        this.matter.world.on('collisionstart', this._onCollisionStart, this);
+
+        // Счётчик забегов для рекламы
+        this._incrementRunCount();
+      }
+
+      /** HUD: монеты и дальность */
+      _createHUD() {
+        this.hudCoins = this.add.text(20, 20, 'Монеты: 0', {
+          fontFamily: 'Arial', fontSize: '28px', color: '#ffffff',
+          stroke: '#000', strokeThickness: 4
+        }).setScrollFactor(0).setDepth(100);
+
+        this.hudDistance = this.add.text(20, 60, 'Дальность: 0 м', {
+          fontFamily: 'Arial', fontSize: '28px', color: '#ffffff',
+          stroke: '#000', strokeThickness: 4
+        }).setScrollFactor(0).setDepth(100);
+      }
+
+      _updateHUD() {
+        let dist = 0;
+        if (this.granny && this.granny.body) {
+          dist = Math.max(0, (this.granny.body.position.x - 150) / 10);
+        }
+        this.hudDistance.setText(`Дальность: ${Math.floor(dist)} м`);
+        this.hudCoins.setText(`Монеты: ${this.totalCoins}`);
+      }
+
+      // ----------------------------------------------------------
+      // Генерация мира
+      // ----------------------------------------------------------
+      generateWorld() {
+        let x = 600;
+        while (x < 7000) {
+          const type = Phaser.Math.Between(0, 3);
+          switch (type) {
+            case 0: this._createTrampoline(x); break;
+            case 1: this._createFan(x); break;
+            case 2: this._createCrow(x); break;
+            case 3: this._createCoin(x); break;
+          }
+          x += Phaser.Math.Between(600, 900);
+        }
+      }
+
+      _createTrampoline(x) {
+        const y = 1200;
+        const body = this.matter.add.rectangle(x, y, 80, 20, {
+          isStatic: true,
+          label: 'trampoline',
+          restitution: 0.3
+        });
+        const sprite = this.add.rectangle(x, y, 80, 20, 0x44ff44);
+        this.worldObjects.push({ type: 'trampoline', body, sprite });
+      }
+
+      _createFan(x) {
+        const y = 1100;
+        const body = this.matter.add.rectangle(x, y, 50, 50, {
+          isStatic: true,
+          label: 'fan'
+        });
+        const sprite = this.add.rectangle(x, y, 50, 50, 0x888888);
+        // «Лопасти» — декоративные линии
+        const g = this.add.graphics();
+        g.lineStyle(3, 0xcccccc);
+        g.strokeCircle(x, y, 18);
+        this.worldObjects.push({ type: 'fan', body, sprite, g });
+      }
+
+      _createCrow(x) {
+        const y = 800;
+        const body = this.matter.add.circle(x, y, 15, {
+          isStatic: true,
+          label: 'crow'
+        });
+        const sprite = this.add.circle(x, y, 15, 0x111111);
+        const crow = { body, sprite, baseX: x, startTime: this.time.now };
+        this.crows.push(crow);
+        this.worldObjects.push({ type: 'crow', body, sprite, crow });
+      }
+
+      _createCoin(x) {
+        const y = Phaser.Math.Between(900, 1150);
+        const body = this.matter.add.circle(x, y, 10, {
+          isStatic: true,
+          isSensor: true,
+          label: 'coin'
+        });
+        const sprite = this.add.circle(x, y, 10, 0xffdd00);
+        this.worldObjects.push({ type: 'coin', body, sprite, collected: false });
+      }
+
+      // ----------------------------------------------------------
+      // Создание бабки-ragdoll
+      // ----------------------------------------------------------
+      createGranny(x, y) {
+        const head = this.matter.add.circle(x, y - 28, 18, {
+          mass: 0.5,
+          label: 'grannyHead',
+          friction: 0.3,
+          restitution: 0.2
+        });
+        const body = this.matter.add.rectangle(x, y + 5, 24, 40, {
+          mass: 1,
+          label: 'grannyBody',
+          friction: 0.3,
+          restitution: 0.2
+        });
+        const legs = this.matter.add.rectangle(x, y + 38, 30, 30, {
+          mass: 1.2,
+          label: 'grannyLegs',
+          friction: 0.3,
+          restitution: 0.2
+        });
+
+        const c1 = this.matter.add.constraint(head, body, 2, 1, { stiffness: 1 });
+        const c2 = this.matter.add.constraint(body, legs, 2, 1, { stiffness: 1 });
+
+        const headSprite = this.add.circle(0, 0, 18, 0xffccaa);
+        const bodySprite = this.add.rectangle(0, 0, 24, 40, 0xff6699);
+        const legsSprite = this.add.rectangle(0, 0, 30, 30, 0x9966ff);
+
+        // Глаза на голове
+        const eyeL = this.add.circle(0, 0, 3, 0x000000);
+        const eyeR = this.add.circle(0, 0, 3, 0x000000);
+
+        return {
+          head, body, legs,
+          constraints: [c1, c2],
+          headSprite, bodySprite, legsSprite,
+          eyeL, eyeR
+        };
+      }
+
+      /** Синхронизация спрайтов с Matter-телами */
+      _syncGrannySprites() {
+        if (!this.granny) return;
+        const g = this.granny;
+        const parts = [
+          { body: g.head, sprite: g.headSprite },
+          { body: g.body, sprite: g.bodySprite },
+          { body: g.legs, sprite: g.legsSprite }
+        ];
+        parts.forEach(({ body, sprite }) => {
+          sprite.setPosition(body.position.x, body.position.y);
+          sprite.setRotation(body.angle);
+        });
+        // Глаза
+        const hx = g.head.position.x;
+        const hy = g.head.position.y;
+        const ha = g.head.angle;
+        const off = 7;
+        g.eyeL.setPosition(hx + Math.cos(ha - 0.5) * off, hy + Math.sin(ha - 0.5) * off);
+        g.eyeR.setPosition(hx + Math.cos(ha + 0.5) * off, hy + Math.sin(ha + 0.5) * off);
+      }
+
+      /** Позиция дула пушки */
+      _getMuzzlePos() {
+        const rad = Phaser.Math.DegToRad(this.cannonAngleDeg);
+        const pivotX = this.cannonX;
+        const pivotY = this.cannonY;
+        const localMuzzleX = 40;
+        const localMuzzleY = -60;
+        const cos = Math.cos(rad);
+        const sin = Math.sin(rad);
+        return {
+          x: pivotX + localMuzzleX * cos - localMuzzleY * sin,
+          y: pivotY + localMuzzleX * sin + localMuzzleY * cos
+        };
+      }
+
+      // ----------------------------------------------------------
+      // Управление
+      // ----------------------------------------------------------
+      _onPointerDown(pointer) {
+        if (this.isGameOver) return;
+
+        // Тап по экрану во время полёта — пердёж
+        if (this.isFlying) {
+          this._doFart();
+          return;
+        }
+
+        if (this.isCharging) return;
+
+        this.isCharging = true;
+        this.chargeStartTime = this.time.now;
+        this.chargeProgress = 0;
+        this.forceBar.setVisible(true);
+        this._updateCannonAngle(pointer);
+      }
+
+      _onPointerMove(pointer) {
+        if (!this.isCharging) return;
+        this._updateCannonAngle(pointer);
+        const elapsed = this.time.now - this.chargeStartTime;
+        this.chargeProgress = Math.min(1, elapsed / 1500);
+        this._drawForceBar();
+      }
+
+      _onPointerUp() {
+        if (!this.isCharging || this.isGameOver) return;
+        this._fire();
+      }
+
+      _updateCannonAngle(pointer) {
+        const cam = this.cameras.main;
+        const worldY = pointer.y + cam.scrollY;
+        // Верх экрана -> 70°, низ -> 20°
+        const screenTop = cam.scrollY;
+        const screenBot = cam.scrollY + cam.height;
+        const t = Phaser.Math.Clamp((worldY - screenTop) / (screenBot - screenTop), 0, 1);
+        this.cannonAngleDeg = Phaser.Math.Linear(70, 20, t);
+        this.cannon.setRotation(Phaser.Math.DegToRad(-this.cannonAngleDeg));
+      }
+
+      _drawForceBar() {
+        const g = this.forceBar;
+        g.clear();
+        const barX = this.cannonX;
+        const barY = this.cannonY - 120;
+        const barW = 120;
+        const barH = 16;
+        g.fillStyle(0x333333, 0.8);
+        g.fillRect(barX - barW / 2, barY, barW, barH);
+        g.fillStyle(0x4488ff, 1);
+        g.fillRect(barX - barW / 2, barY, barW * this.chargeProgress, barH);
+      }
+
+      _fire() {
+        this.isCharging = false;
+        this.forceBar.setVisible(false);
+        this.isFlying = true;
+
+        const muzzle = this._getMuzzlePos();
+        this.granny = this.createGranny(muzzle.x, muzzle.y);
+
+        const speed = 15 * this.chargeProgress + 5;
+        const rad = Phaser.Math.DegToRad(this.cannonAngleDeg);
+        const vx = Math.cos(rad) * speed;
+        const vy = -Math.sin(rad) * speed;
+        setGrannyVelocity(this, this.granny, vx, vy);
+
+        SoundFX.shoot();
+
+        // Камера следует за бабкой
+        this.cameras.main.startFollow(this.granny.bodySprite, false, 0.1, 0.1);
+
+        // Кнопка пердежа
+        this.fartBtn.setVisible(true);
+        this.fartBtnText.setVisible(true);
+      }
+
+      // ----------------------------------------------------------
+      // Пердёж
+      // ----------------------------------------------------------
+      _doFart() {
+        if (!this.isFlying || this.fartUsed || this.isGameOver || !this.granny) return;
+
+        this.fartUsed = true;
+        this.fartBtn.setVisible(false);
+        this.fartBtnText.setVisible(false);
+
+        const head = this.granny.head;
+        const angle = head.angle;
+        const force = 0.4;
+        this.matter.body.applyForce(head, head.position, {
+          x: Math.cos(angle) * force * 0.01,
+          y: Math.sin(angle) * force * 0.01
+        });
+
+        SoundFX.fart();
+
+        // Облачко у ног
+        const lx = this.granny.legs.position.x;
+        const ly = this.granny.legs.position.y;
+        const cloud = this.add.circle(lx, ly, 25, 0xffffff, 0.5);
+        this.time.delayedCall(200, () => cloud.destroy());
+      }
+
+      // ----------------------------------------------------------
+      // Столкновения
+      // ----------------------------------------------------------
+      _onCollisionStart(event) {
+        if (!this.granny) return;
+
+        event.pairs.forEach((pair) => {
+          const { bodyA, bodyB } = pair;
+          const labels = [bodyA.label, bodyB.label];
+          const grannyBody = isGrannyPart(bodyA) ? bodyA : (isGrannyPart(bodyB) ? bodyB : null);
+          const other = grannyBody === bodyA ? bodyB : bodyA;
+
+          if (!grannyBody) return;
+
+          // Земля
+          if (labels.includes('ground')) {
+            this.groundTouched = true;
+          }
+
+          // Батут
+          if (labels.includes('trampoline')) {
+            getGrannyBodies(this.granny).forEach((b) => {
+              this.matter.body.setVelocity(b, {
+                x: b.velocity.x,
+                y: b.velocity.y - 0.5
+              });
+            });
+          }
+
+          // Вентилятор
+          if (labels.includes('fan')) {
+            const f = 0.3;
+            const angle = -Math.PI / 4;
+            applyImpulseToGranny(this, this.granny, Math.cos(angle) * f * 0.01, Math.sin(angle) * f * 0.01);
+          }
+
+          // Ворона
+          if (labels.includes('crow')) {
+            const a = Math.random() * Math.PI * 2;
+            const f = 0.1;
+            applyImpulseToGranny(this, this.granny, Math.cos(a) * f * 0.01, Math.sin(a) * f * 0.01);
+          }
+
+          // Монета
+          if (labels.includes('coin')) {
+            const coinObj = this.worldObjects.find(
+              (o) => o.type === 'coin' && o.body === other && !o.collected
+            );
+            if (coinObj) {
+              coinObj.collected = true;
+              this.totalCoins += 10;
+              SoundFX.coin();
+
+              const cx = coinObj.sprite.x;
+              const cy = coinObj.sprite.y;
+              this.tweens.add({
+                targets: coinObj.sprite,
+                alpha: 0,
+                scale: 1.5,
+                duration: 200,
+                onComplete: () => {
+                  coinObj.sprite.destroy();
+                  this.matter.world.remove(coinObj.body);
+                }
+              });
+
+              const popup = this.add.text(cx, cy - 30, '+10', {
+                fontFamily: 'Arial', fontSize: '28px', color: '#ffdd00',
+                stroke: '#000', strokeThickness: 3
+              }).setOrigin(0.5);
+              this.tweens.add({
+                targets: popup,
+                y: cy - 80,
+                alpha: 0,
+                duration: 500,
+                onComplete: () => popup.destroy()
+              });
+            }
+          }
+        });
+      }
+
+      // ----------------------------------------------------------
+      // Конец игры
+      // ----------------------------------------------------------
+      endGame() {
+        if (this.isGameOver) return;
+        this.isGameOver = true;
+        this.isFlying = false;
+
+        this.matter.world.pause();
+        this.cameras.main.stopFollow();
+
+        const grannyX = this.granny ? this.granny.body.position.x : 150;
+        const distance = Math.max(0, (grannyX - 150) / 10);
+        this.bestDistance = Math.floor(distance);
+        const totalScore = this.bestDistance + this.totalCoins;
+
+        // Обновить рекорд
+        const oldRecord = parseInt(localStorage.getItem(STORAGE.RECORD) || '0', 10);
+        if (this.bestDistance > oldRecord) {
+          localStorage.setItem(STORAGE.RECORD, String(this.bestDistance));
+        }
+
+        // Сохранить для shareRecord
+        this._lastDistance = this.bestDistance;
+        this._lastCoins = this.totalCoins;
+        this._lastTotal = totalScore;
+
+        this._showResults(distance);
+      }
+
+      _showResults(distance) {
+        const cam = this.cameras.main;
+        const cx = cam.scrollX + cam.width / 2;
+        const cy = cam.scrollY + cam.height / 2;
+
+        const overlay = this.add.rectangle(cx, cy, cam.width, cam.height, 0x000000, 0.7)
+          .setScrollFactor(0).setDepth(200);
+
+        const phrase = Phaser.Utils.Array.GetRandom(STYLE_PHRASES);
+        const lines = [
+          'Результат',
+          `Дальность: ${Math.floor(distance)} м`,
+          `Монеты: ${this.totalCoins}`,
+          `Всего очков: ${this._lastTotal}`,
+          phrase
+        ];
+
+        const title = this.add.text(cx, cy - 280, lines[0], {
+          fontFamily: 'Arial', fontSize: '48px', color: '#ffffff'
+        }).setOrigin(0.5).setScrollFactor(0).setDepth(201);
+
+        const info = this.add.text(cx, cy - 160, lines.slice(1, 4).join('\n'), {
+          fontFamily: 'Arial', fontSize: '30px', color: '#ffffff', align: 'center'
+        }).setOrigin(0.5).setScrollFactor(0).setDepth(201);
+
+        const phraseText = this.add.text(cx, cy - 40, phrase, {
+          fontFamily: 'Arial', fontSize: '26px', color: '#ffcc00', fontStyle: 'italic'
+        }).setOrigin(0.5).setScrollFactor(0).setDepth(201);
+
+        // Кнопки
+        const btnY = cy + 80;
+        const gap = 90;
+
+        this._makeResultButton(cx, btnY, 'Играть ещё', 0x44aa44, () => {
+          this.scene.restart();
+        });
+
+        this._makeResultButton(cx, btnY + gap, 'Меню', 0x4488cc, () => {
+          this._goToMenu();
+        });
+
+        this._makeResultButton(cx, btnY + gap * 2, 'Поделиться рекордом', 0xcc8844, () => {
+          shareRecord(this._lastDistance);
+        });
+
+        this.resultCoinBtn = this._makeResultButton(cx, btnY + gap * 3, 'x2 монет (реклама)', 0xaa44aa, () => {
+          showRewarded(this);
+        });
+
+        this._resultUI = { overlay, title, info, phraseText };
+      }
+
+      _makeResultButton(x, y, label, color, callback) {
+        const btn = this.add.rectangle(x, y, 400, 70, color)
+          .setScrollFactor(0).setDepth(201).setInteractive({ useHandCursor: true });
+        const txt = this.add.text(x, y, label, {
+          fontFamily: 'Arial', fontSize: '26px', color: '#ffffff'
+        }).setOrigin(0.5).setScrollFactor(0).setDepth(202);
+        btn.on('pointerdown', callback);
+        return { btn, txt };
+      }
+
+      _goToMenu() {
+        const count = parseInt(localStorage.getItem(STORAGE.RUN_COUNT) || '0', 10);
+        if (count > 0 && count % 3 === 0) {
+          try {
+            if (window.YaGames && window.YaGames.adv) {
+              window.YaGames.adv.showFullscreenAdv();
+            }
+          } catch (e) { /* ignore */ }
+        }
+        this.scene.start('MenuScene');
+      }
+
+      _incrementRunCount() {
+        const count = parseInt(localStorage.getItem(STORAGE.RUN_COUNT) || '0', 10) + 1;
+        localStorage.setItem(STORAGE.RUN_COUNT, String(count));
+      }
+
+      // ----------------------------------------------------------
+      // Update
+      // ----------------------------------------------------------
+      update(time) {
+        if (this.isCharging) {
+          const elapsed = time - this.chargeStartTime;
+          this.chargeProgress = Math.min(1, elapsed / 1500);
+          this._drawForceBar();
+        }
+
+        // Вороны — синусоида
+        this.crows.forEach((crow) => {
+          const t = (time - crow.startTime) / 1000;
+          const newY = 800 + Math.sin(t * 3) * 50;
+          this.matter.body.setPosition(crow.body, { x: crow.baseX, y: newY });
+          crow.sprite.setPosition(crow.baseX, newY);
+        });
+
+        if (this.granny) {
+          this._syncGrannySprites();
+          this._updateHUD();
+
+          if (this.isFlying && !this.isGameOver) {
+            const bx = this.granny.body.position.x;
+            const by = this.granny.body.position.y;
+
+            if (bx > 7800 || by < -200) {
+              this.endGame();
+              return;
+            }
+
+            if (this.groundTouched) {
+              const bodies = getGrannyBodies(this.granny);
+              const allSlow = bodies.every((b) => {
+                const spd = Math.sqrt(b.velocity.x ** 2 + b.velocity.y ** 2);
+                return spd < 0.5;
+              });
+
+              if (allSlow) {
+                this.stallTimer += this.game.loop.delta;
+                if (this.stallTimer >= 800) {
+                  this.endGame();
+                }
+              } else {
+                this.stallTimer = 0;
+              }
+            }
+          }
+        }
+
+        // Ограничение камеры в пределах мира
+        const cam = this.cameras.main;
+        cam.scrollX = Phaser.Math.Clamp(cam.scrollX, 0, this.worldWidth - cam.width);
+        cam.scrollY = Phaser.Math.Clamp(cam.scrollY, 0, this.worldHeight - cam.height);
+      }
+    }
+
+    // ============================================================
+    // Яндекс SDK — вспомогательные функции
+    // ============================================================
+    function shareRecord(bestDistance) {
+      try {
+        const yg = window.YaGames;
+        if (yg && yg.share) {
+          yg.share({
+            title: `Я запустил бабку на ${bestDistance} м!`,
+            text: 'Побей мой рекорд в Бабке на Пушке!',
+            url: window.location.href
+          });
+        }
+      } catch (e) {
+        console.warn('shareRecord error:', e);
+      }
+    }
+
+    function showRewarded(scene) {
+      try {
+        const yg = window.YaGames;
+        const show = yg && yg.adv && yg.adv.showRewardedVideo
+          ? yg.adv.showRewardedVideo()
+          : Promise.resolve();
+
+        show.then(() => {
+          scene.totalCoins *= 2;
+          scene._lastCoins = scene.totalCoins;
+          scene._lastTotal = scene.bestDistance + scene.totalCoins;
+          if (scene._resultUI && scene._resultUI.info) {
+            scene._resultUI.info.setText(
+              `Дальность: ${scene.bestDistance} м\nМонеты: ${scene.totalCoins}\nВсего очков: ${scene._lastTotal}`
+            );
+          }
+        }).catch(() => {});
+      } catch (e) {
+        console.warn('showRewarded error:', e);
+      }
+    }
+
+    // ============================================================
+    // Запуск Phaser
+    // ============================================================
+    const config = {
+      type: Phaser.AUTO,
+      width: 720,
+      height: 1280,
+      parent: 'game-container',
+      backgroundColor: '#1a1a2e',
+      scale: {
+        mode: Phaser.Scale.FIT,
+        autoCenter: Phaser.Scale.CENTER_BOTH
+      },
+      physics: {
+        default: 'matter',
+        matter: {
+          gravity: { x: 0, y: 1 },
+          enableSleeping: false
+        }
+      },
+      scene: [BootScene, MenuScene, GameScene]
+    };
+
+    new Phaser.Game(config);
+  </script>
+</body>
+</html>
