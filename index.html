@@ -3,432 +3,634 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Бабка на Пушке</title>
-  <script>
-    window.YaGames = window.YaGames || {
-      init() { return Promise.resolve({ adv: this.adv }); },
-      share(p) { alert('Поделиться: ' + (p?.title || '')); },
-      adv: {
-        showRewardedVideo() { return Promise.resolve(); },
-        showFullscreenAdv() {}
-      }
-    };
-  </script>
-  <script src="https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.js"></script>
+  <title>Бабка на Пушке 3D</title>
   <style>
     * { margin:0; padding:0; box-sizing:border-box; }
-    html, body { width:100%; height:100%; overflow:hidden; background:#1565c0; touch-action:none; }
-    #game-container { width:100%; height:100%; }
+    html, body { width:100%; height:100%; overflow:hidden; background:#0a1628; touch-action:none; font-family:'Segoe UI',Arial,sans-serif; }
+    #canvas-wrap { position:fixed; inset:0; }
+    canvas { display:block; width:100%; height:100%; }
+    .ui { position:fixed; left:0; right:0; pointer-events:none; z-index:10; color:#fff; text-shadow:0 2px 6px rgba(0,0,0,.7); }
+    #hud { top:16px; left:16px; font-size:22px; line-height:1.5; }
+    #hint { bottom:90px; left:0; right:0; text-align:center; font-size:18px; opacity:.9; }
+    .screen { position:fixed; inset:0; z-index:20; display:flex; flex-direction:column; align-items:center; justify-content:center;
+      background:linear-gradient(180deg,rgba(10,22,40,.92),rgba(20,50,90,.95)); pointer-events:auto; }
+    .screen.hide { display:none; }
+    .screen h1 { font-size:clamp(28px,6vw,44px); margin-bottom:8px; text-align:center; color:#fff; }
+    .screen .rec { color:#ffd54f; font-size:22px; margin-bottom:32px; }
+    .btn { background:linear-gradient(180deg,#66bb6a,#43a047); border:none; color:#fff; font-size:24px; font-weight:bold;
+      padding:16px 56px; border-radius:14px; cursor:pointer; box-shadow:0 6px 20px rgba(0,0,0,.4); pointer-events:auto; }
+    .btn:active { transform:scale(.96); }
+    .btn.sec { background:linear-gradient(180deg,#42a5f5,#1e88e5); margin-top:12px; font-size:20px; padding:12px 40px; }
+    #fart-btn { position:fixed; right:20px; bottom:100px; z-index:15; width:72px; height:72px; border-radius:50%;
+      background:linear-gradient(180deg,#ab47bc,#7b1fa2); border:3px solid #fff; font-size:28px; display:none;
+      pointer-events:auto; box-shadow:0 4px 16px rgba(0,0,0,.5); cursor:pointer; }
+    #results p { font-size:22px; color:#e3f2fd; margin:8px 0; text-align:center; }
+    #results .big { font-size:32px; color:#ff7043; font-weight:bold; }
   </style>
 </head>
 <body>
-  <div id="game-container"></div>
-  <script>
-    // ================================================================
-    const W = 720, H = 1280, WORLD_W = 6000;
-    const GY = 1210;           // верх земли (трава)
-    const GROUND_BODY_Y = GY + 20;
-    const CX = 200, CY = GY - 15;  // пушка
-    const BARREL = 90;
-    const MAX_PULL = 180;
-    const STORE = { rec: 'grannyRecord' };
+  <div id="canvas-wrap"></div>
+  <div id="hud" class="ui hide"><div id="dist">0 м</div><div id="coins">🪙 0</div></div>
+  <div id="hint" class="ui hide">👇 Тяни вниз от пушки и отпусти</div>
+  <button id="fart-btn" title="Пёрнуть">💨</button>
 
-    // ================================================================
-    // Рисование в текстуры (один раз — потом как спрайты)
-    // ================================================================
-    function bakeTexture(scene, key, w, h, draw) {
-      if (scene.textures.exists(key)) return;
-      const g = scene.make.graphics({ add: false });
-      g.clear();
-      draw(g, w, h);
-      g.generateTexture(key, w, h);
-      g.destroy();
+  <div id="menu" class="screen">
+    <h1>🧓 Бабка на Пушке</h1>
+    <p class="rec">Рекорд: <span id="rec-val">0</span> м</p>
+    <button class="btn" id="play-btn">ИГРАТЬ</button>
+  </div>
+  <div id="results" class="screen hide">
+    <h1>Результат</h1>
+    <p class="big" id="res-dist">0 м</p>
+    <p id="res-coins">Монеты: 0</p>
+    <p id="res-phrase"></p>
+    <button class="btn" id="again-btn">Ещё раз</button>
+    <button class="btn sec" id="menu-btn">Меню</button>
+  </div>
+
+  <script type="importmap">
+  { "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }}
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+
+    // ─── Конфиг ─────────────────────────────────────────────
+    const CFG = {
+      worldLen: 500,
+      groundY: 0,
+      cannonX: 8,
+      maxPull: 12,
+      minSpd: 18,
+      maxSpd: 42,
+      gravity: -14
+    };
+    const PHRASES = ['Бабка-звезда!','Внучок, я улетела!','Костей не соберёшь!','Ой, спина!'];
+    const STORE = 'grannyRecord3d';
+
+    // ─── Рендерер и сцена ───────────────────────────────────
+    const wrap = document.getElementById('canvas-wrap');
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.15;
+    wrap.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x87ceeb);
+    scene.fog = new THREE.Fog(0x87ceeb, 40, 280);
+
+    const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.5, 500);
+    camera.position.set(-12, 14, 22);
+    camera.lookAt(15, 4, 0);
+
+    // ─── Свет ───────────────────────────────────────────────
+    scene.add(new THREE.HemisphereLight(0xb3e5fc, 0x558b2f, 0.55));
+    const sun = new THREE.DirectionalLight(0xfff5e0, 1.35);
+    sun.position.set(-30, 50, 25);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.camera.near = 1;
+    sun.shadow.camera.far = 200;
+    sun.shadow.camera.left = -80;
+    sun.shadow.camera.right = 120;
+    sun.shadow.camera.top = 50;
+    sun.shadow.camera.bottom = -10;
+    sun.shadow.bias = -0.0003;
+    scene.add(sun);
+
+    // ─── Материалы ──────────────────────────────────────────
+    const Mat = {
+      grass: new THREE.MeshStandardMaterial({ color: 0x4caf50, roughness: 0.95 }),
+      dirt: new THREE.MeshStandardMaterial({ color: 0x6d4c41, roughness: 1 }),
+      wood: new THREE.MeshStandardMaterial({ color: 0x8d6e63, roughness: 0.85 }),
+      woodD: new THREE.MeshStandardMaterial({ color: 0x5d4037, roughness: 0.9 }),
+      metal: new THREE.MeshStandardMaterial({ color: 0x78909c, metalness: 0.65, roughness: 0.35 }),
+      brass: new THREE.MeshStandardMaterial({ color: 0xffb300, metalness: 0.8, roughness: 0.25 }),
+      skin: new THREE.MeshStandardMaterial({ color: 0xffccbc, roughness: 0.75 }),
+      hair: new THREE.MeshStandardMaterial({ color: 0xb0bec5, roughness: 0.9 }),
+      dress: new THREE.MeshStandardMaterial({ color: 0xec407a, roughness: 0.8 }),
+      scarf: new THREE.MeshStandardMaterial({ color: 0xd32f2f, roughness: 0.85 }),
+      legs: new THREE.MeshStandardMaterial({ color: 0x7e57c2, roughness: 0.8 }),
+      boot: new THREE.MeshStandardMaterial({ color: 0x3e2723, roughness: 0.7 }),
+      tramp: new THREE.MeshStandardMaterial({ color: 0x00e676, roughness: 0.6 }),
+      coin: new THREE.MeshStandardMaterial({ color: 0xffd700, metalness: 0.9, roughness: 0.2 }),
+      fan: new THREE.MeshStandardMaterial({ color: 0x607d8b, roughness: 0.5, metalness: 0.3 }),
+      hill: new THREE.MeshStandardMaterial({ color: 0x66bb6a, roughness: 1 }),
+      hill2: new THREE.MeshStandardMaterial({ color: 0x43a047, roughness: 1 }),
+      cloud: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, transparent: true, opacity: 0.92 })
+    };
+
+    function mesh(geo, mat, cast = true) {
+      const m = new THREE.Mesh(geo, mat);
+      m.castShadow = cast;
+      m.receiveShadow = true;
+      return m;
     }
 
-    function registerTextures(scene) {
-      bakeTexture(scene, 'head', 52, 52, (g) => {
-        g.fillStyle(0xb0bec5); g.fillCircle(26, 20, 22);
-        g.fillStyle(0xffccbc); g.fillCircle(26, 26, 19);
-        g.fillStyle(0xffffff); g.fillCircle(20, 24, 5); g.fillCircle(32, 24, 5);
-        g.fillStyle(0x222222); g.fillCircle(21, 24, 2.5); g.fillCircle(33, 24, 2.5);
-        g.lineStyle(2, 0x37474f); g.strokeCircle(20, 24, 7); g.strokeCircle(32, 24, 7);
-        g.lineStyle(2, 0xc62828); g.beginPath(); g.arc(26, 32, 4, 0.3, Math.PI - 0.3); g.strokePath();
-        g.fillStyle(0xd32f2f); g.fillTriangle(12, 16, 40, 16, 26, 28);
-      });
-      bakeTexture(scene, 'torso', 56, 56, (g) => {
-        g.fillStyle(0xec407a); g.fillRoundedRect(10, 8, 36, 40, 8);
-        g.fillStyle(0xad1457); [[18,18],[30,24],[16,32],[34,36]].forEach(([x,y]) => g.fillCircle(x, y, 3));
-        g.fillStyle(0xffccbc); g.fillRoundedRect(2, 16, 10, 22, 4); g.fillRoundedRect(44, 16, 10, 22, 4);
-      });
-      bakeTexture(scene, 'legs', 52, 44, (g) => {
-        g.fillStyle(0x7e57c2); g.fillRoundedRect(4, 2, 18, 26, 4); g.fillRoundedRect(30, 2, 18, 26, 4);
-        g.fillStyle(0x3e2723); g.fillRoundedRect(2, 26, 20, 12, 3); g.fillRoundedRect(28, 26, 20, 12, 3);
-      });
-      bakeTexture(scene, 'cannon', 100, 120, (g) => {
-        g.fillStyle(0x424242); g.fillCircle(22, 100, 16); g.fillCircle(72, 100, 16);
-        g.fillStyle(0x6d4c41); g.fillRoundedRect(8, 82, 84, 20, 5);
-        g.fillStyle(0x546e7a); g.fillRoundedRect(36, 8, 26, 78, 5);
-        g.fillStyle(0xffb300); g.fillCircle(49, 8, 14);
-        g.fillStyle(0x212121); g.fillCircle(49, 8, 6);
-      });
-      bakeTexture(scene, 'tramp', 88, 32, (g) => {
-        g.fillStyle(0x455a64); g.fillRect(0, 22, 88, 8);
-        g.fillStyle(0x00e676); g.fillRoundedRect(4, 8, 80, 14, 4);
-      });
-      bakeTexture(scene, 'fan', 52, 52, (g) => {
-        g.fillStyle(0x607d8b); g.fillRoundedRect(0, 0, 52, 52, 6);
-        g.fillStyle(0xeeeeee); g.fillEllipse(26, 26, 22, 8);
-      });
-      bakeTexture(scene, 'coin', 28, 28, (g) => {
-        g.fillStyle(0xffc107); g.fillCircle(14, 14, 13);
-        g.fillStyle(0xffeb3b); g.fillCircle(14, 14, 10);
-      });
-      bakeTexture(scene, 'crow', 44, 32, (g) => {
-        g.fillStyle(0x212121); g.fillEllipse(18, 18, 28, 16);
-        g.fillStyle(0xff9800); g.fillTriangle(32, 14, 42, 16, 32, 18);
-      });
+    // ─── Окружение ──────────────────────────────────────────
+  const ground = mesh(new THREE.BoxGeometry(CFG.worldLen, 1.2, 40), Mat.grass);
+    ground.position.set(CFG.worldLen / 2, -0.6, 0);
+    scene.add(ground);
+    const dirt = mesh(new THREE.BoxGeometry(CFG.worldLen, 0.8, 40), Mat.dirt, false);
+    dirt.position.set(CFG.worldLen / 2, -1.4, 0);
+    dirt.receiveShadow = true;
+    scene.add(dirt);
+
+    // холмы (декор)
+    for (let i = 0; i < 40; i++) {
+      const h = mesh(new THREE.ConeGeometry(8 + Math.random() * 12, 6 + Math.random() * 10, 6), i % 2 ? Mat.hill : Mat.hill2, false);
+      h.position.set(i * 14 + Math.random() * 8, -0.5, -8 - Math.random() * 6);
+      h.rotation.y = Math.random() * Math.PI;
+      scene.add(h);
+    }
+    // облака
+    for (let i = 0; i < 15; i++) {
+      const c = new THREE.Group();
+      for (let j = 0; j < 4; j++) {
+        const p = mesh(new THREE.SphereGeometry(1.5 + Math.random(), 10, 8), Mat.cloud, false);
+        p.position.set(j * 2 - 3, Math.random() * 0.5, Math.random() * 1.5);
+        c.add(p);
+      }
+      c.position.set(i * 35 + Math.random() * 20, 22 + Math.random() * 8, -15 - Math.random() * 10);
+      scene.add(c);
     }
 
-    // ================================================================
-    class BootScene extends Phaser.Scene {
-      constructor() { super('Boot'); }
-      create() {
-        registerTextures(this);
-        this.scene.start('Menu');
-      }
+    // ─── 3D Пушка ───────────────────────────────────────────
+    function buildCannon() {
+      const g = new THREE.Group();
+      const carriage = mesh(new THREE.BoxGeometry(3.2, 0.7, 2.2), Mat.woodD);
+      carriage.position.y = 0.35;
+      g.add(carriage);
+      const plank = mesh(new THREE.BoxGeometry(2.8, 0.25, 1.8), Mat.wood);
+      plank.position.y = 0.75;
+      g.add(plank);
+      [[-1, 0.5], [1.6, 0.5]].forEach(([x, z]) => {
+        const w = mesh(new THREE.CylinderGeometry(0.55, 0.55, 0.35, 16), Mat.metal);
+        w.rotation.z = Math.PI / 2;
+        w.position.set(x, 0.55, z);
+        g.add(w);
+        const rim = mesh(new THREE.TorusGeometry(0.55, 0.06, 8, 20), Mat.metal);
+        rim.rotation.y = Math.PI / 2;
+        rim.position.set(x, 0.55, z);
+        g.add(rim);
+      });
+      const barrel = mesh(new THREE.CylinderGeometry(0.35, 0.45, 4.5, 16), Mat.metal);
+      barrel.rotation.z = Math.PI / 2;
+      barrel.position.set(2.2, 1.6, 0);
+      g.add(barrel);
+      const ring = mesh(new THREE.TorusGeometry(0.5, 0.08, 10, 24), Mat.brass);
+      ring.position.set(4.35, 1.6, 0);
+      ring.rotation.y = Math.PI / 2;
+      g.add(ring);
+      const muzzle = mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.3, 12), new THREE.MeshStandardMaterial({ color: 0x212121 }));
+      muzzle.rotation.z = Math.PI / 2;
+      muzzle.position.set(4.6, 1.6, 0);
+      g.add(muzzle);
+      g.position.set(CFG.cannonX, 0.8, 0);
+      return g;
     }
 
-    class MenuScene extends Phaser.Scene {
-      constructor() { super('Menu'); }
-      create() {
-        this.add.rectangle(W / 2, H / 2, W, H, 0x42a5f5);
-        this.add.text(W / 2, 140, 'Бабка на Пушке', {
-          fontSize: '48px', fontStyle: 'bold', color: '#fff', stroke: '#0d47a1', strokeThickness: 6
-        }).setOrigin(0.5);
-        this.add.text(W / 2, 220, 'Рекорд: ' + (localStorage.getItem(STORE.rec) || '0') + ' м', {
-          fontSize: '28px', color: '#ffee58'
-        }).setOrigin(0.5);
-        this.add.image(W / 2, H * 0.5, 'cannon').setScale(1.2);
-        this.add.image(W / 2, H * 0.38, 'head');
+    const cannon = buildCannon();
+    scene.add(cannon);
 
-        const play = this.add.rectangle(W / 2, H - 180, 260, 70, 0x43a047).setInteractive({ useHandCursor: true });
-        this.add.text(W / 2, H - 180, 'ИГРАТЬ', { fontSize: '32px', color: '#fff', fontStyle: 'bold' }).setOrigin(0.5);
-        play.on('pointerdown', () => this.scene.start('Game'));
-        this.add.text(W / 2, H - 90, 'Тяни пальцем вниз от пушки → отпусти', {
-          fontSize: '18px', color: '#e3f2fd'
-        }).setOrigin(0.5);
-      }
+    // ─── 3D Бабка (составная модель) ────────────────────────
+    function buildGrannyMesh() {
+      const g = new THREE.Group();
+      const headG = new THREE.Group();
+      const skull = mesh(new THREE.SphereGeometry(0.42, 20, 16), Mat.skin);
+      headG.add(skull);
+      const bun = mesh(new THREE.SphereGeometry(0.35, 14, 12), Mat.hair);
+      bun.position.set(0, 0.25, -0.15);
+      headG.add(bun);
+      const glassMat = new THREE.MeshStandardMaterial({ color: 0x37474f, metalness: 0.5, roughness: 0.3 });
+      [[-0.18, 0.05], [0.18, 0.05]].forEach(([x, y]) => {
+        const ring = mesh(new THREE.TorusGeometry(0.14, 0.02, 8, 20), glassMat);
+        ring.position.set(x, y, 0.32);
+        headG.add(ring);
+        const eye = mesh(new THREE.SphereGeometry(0.05, 8, 8), new THREE.MeshStandardMaterial({ color: 0x111 }));
+        eye.position.set(x, y, 0.36);
+        headG.add(eye);
+      });
+      const scarf = mesh(new THREE.ConeGeometry(0.45, 0.25, 12), Mat.scarf);
+      scarf.rotation.x = Math.PI;
+      scarf.position.set(0, -0.15, 0.1);
+      headG.add(scarf);
+      g.add(headG);
+      g.userData.head = headG;
+
+      const torso = mesh(new THREE.CapsuleGeometry(0.38, 0.7, 8, 16), Mat.dress);
+      torso.position.y = -0.75;
+      g.add(torso);
+      g.userData.torso = torso;
+
+      const legsG = new THREE.Group();
+      [[-0.22, 0], [0.22, 0]].forEach(([x, z]) => {
+        const leg = mesh(new THREE.CapsuleGeometry(0.16, 0.45, 6, 10), Mat.legs);
+        leg.position.set(x, -0.35, z);
+        legsG.add(leg);
+        const boot = mesh(new THREE.BoxGeometry(0.28, 0.2, 0.38), Mat.boot);
+        boot.position.set(x, -0.65, z);
+        legsG.add(boot);
+      });
+      legsG.position.y = -1.15;
+      g.add(legsG);
+      g.userData.legs = legsG;
+      return g;
     }
 
-    class GameScene extends Phaser.Scene {
-      constructor() { super('Game'); }
-
-      create() {
-        this.phase = 'aim';
-        this.dragging = false;
-        this.pull = 0;
-        this.pullAng = -Math.PI / 4;
-        this.coins = 0;
-        this.fartUsed = false;
-        this.groundHit = false;
-        this.stall = 0;
-        this.flyT = 0;
-        this.cd = new Set();
-        this.granny = null;
-
-        // фон
-        const sky = this.add.graphics().setDepth(0);
-        sky.fillGradientStyle(0x42a5f5, 0x42a5f5, 0xbbe0ff, 0xbbe0ff, 1);
-        sky.fillRect(0, 0, WORLD_W, GY + 60);
-        const grd = this.add.graphics().setDepth(1);
-        grd.fillStyle(0x795548); grd.fillRect(0, GY + 4, WORLD_W, 80);
-        grd.fillStyle(0x66bb6a); grd.fillRect(0, GY - 4, WORLD_W, 10);
-
-        this.matter.add.rectangle(WORLD_W / 2, GROUND_BODY_Y, WORLD_W, 44, {
-          isStatic: true, label: 'ground', friction: 0.9, restitution: 0.05
-        });
-
-        // пушка
-        this.cannonSpr = this.add.image(CX, CY, 'cannon').setOrigin(0.45, 0.88).setDepth(30);
-        this.aimGfx = this.add.graphics().setDepth(35);
-        this.props = [];
-
-        this.buildWorld();
-        this.cameras.main.setBounds(0, 0, WORLD_W, H);
-
-        this.lblDist = this.add.text(16, 16, '0 м', {
-          fontSize: '28px', color: '#fff', stroke: '#000', strokeThickness: 4
-        }).setScrollFactor(0).setDepth(100);
-        this.lblCoin = this.add.text(16, 52, '0', {
-          fontSize: '26px', color: '#ffee58', stroke: '#000', strokeThickness: 4
-        }).setScrollFactor(0).setDepth(100);
-        this.lblHint = this.add.text(W / 2, H - 90, '👇 Тяни вниз от пушки', {
-          fontSize: '22px', color: '#fff', stroke: '#000', strokeThickness: 3
-        }).setOrigin(0.5).setScrollFactor(0).setDepth(100);
-
-        this.btnFart = this.add.text(W - 24, H - 80, '💨', { fontSize: '48px' })
-          .setOrigin(1, 0.5).setScrollFactor(0).setDepth(100).setInteractive().setVisible(false);
-        this.btnFart.on('pointerdown', (p, lx, ly, ev) => { if (ev) ev.stopPropagation(); this.fart(); });
-
-        this.input.on('pointerdown', this.onDown, this);
-        this.input.on('pointermove', this.onMove, this);
-        this.input.on('pointerup', this.onUp, this);
-        this.matter.world.on('collisionstart', this.onCollide, this);
+    // ─── Физика (простая кинематика + ragdoll) ──────────────
+    class Body3D {
+      constructor(x, y, z = 0) {
+        this.pos = new THREE.Vector3(x, y, z);
+        this.vel = new THREE.Vector3();
+        this.rot = 0;
+        this.rotV = 0;
+        this.radius = 0.5;
+        this.grounded = false;
       }
-
-      muzzle() {
-        const rad = Phaser.Math.DegToRad(this.cannonSpr.angle - 90);
-        return { x: CX + Math.cos(rad) * BARREL, y: CY + Math.sin(rad) * BARREL };
-      }
-
-      wpos(p) {
-        const c = this.cameras.main;
-        return { x: p.x + c.scrollX, y: p.y + c.scrollY };
-      }
-
-      buildWorld() {
-        let x = 500;
-        while (x < WORLD_W - 300) {
-          const r = Phaser.Math.Between(0, 9);
-          if (r < 2) this.addProp('tramp', x, GY - 6);
-          else if (r < 4) this.addProp('fan', x, GY - 80);
-          else if (r < 5) this.addProp('crow', x, 700);
-          else { const n = Phaser.Math.Between(2, 4); for (let i = 0; i < n; i++) this.addProp('coin', x + i * 36, Phaser.Math.Between(GY - 220, GY - 60)); }
-          x += Phaser.Math.Between(380, 580);
+      step(dt) {
+        this.vel.y += CFG.gravity * dt;
+        this.pos.addScaledVector(this.vel, dt);
+        this.rot += this.rotV * dt;
+        this.rotV *= 0.99;
+        if (this.pos.y < this.radius) {
+          this.pos.y = this.radius;
+          if (this.vel.y < 0) {
+            this.vel.y *= -0.35;
+            this.vel.x *= 0.92;
+            this.grounded = Math.abs(this.vel.y) < 1;
+          }
         }
       }
+    }
 
-      addProp(kind, x, y) {
-        let body, spr;
-        if (kind === 'tramp') {
-          body = this.matter.add.rectangle(x, y, 80, 12, { isStatic: true, label: 'tramp', restitution: 1.1 });
-          spr = this.add.image(x, y, 'tramp').setDepth(15);
-        } else if (kind === 'fan') {
-          body = this.matter.add.rectangle(x, y, 48, 48, { isStatic: true, label: 'fan' });
-          spr = this.add.image(x, y, 'fan').setDepth(15);
-        } else if (kind === 'crow') {
-          body = this.matter.add.circle(x, y, 14, { isStatic: true, label: 'crow' });
-          spr = this.add.image(x, y, 'crow').setDepth(18);
-        } else {
-          body = this.matter.add.circle(x, y, 14, { isStatic: true, isSensor: true, label: 'coin' });
-          spr = this.add.image(x, y, 'coin').setDepth(16);
-        }
-        this.props.push({ kind, body, spr, x, y, got: false, t0: this.time.now });
+    class Ragdoll {
+      constructor(x, y) {
+        this.head = new Body3D(x, y + 0.9);
+        this.head.radius = 0.42;
+        this.torso = new Body3D(x, y);
+        this.torso.radius = 0.45;
+        this.legs = new Body3D(x, y - 0.9);
+        this.legs.radius = 0.4;
+        this.mesh = buildGrannyMesh();
+        this.mesh.visible = false;
+        scene.add(this.mesh);
+        this.parts = [this.head, this.torso, this.legs];
       }
-
-      spawnGranny(x, y) {
-        const o = { friction: 0.12, frictionAir: 0.02, restitution: 0.3 };
-        const head = this.matter.add.circle(x, y - 28, 17, { mass: 0.8, label: 'grannyH', ...o });
-        const torso = this.matter.add.rectangle(x, y + 2, 24, 36, { mass: 1.5, label: 'grannyT', ...o });
-        const legs = this.matter.add.rectangle(x, y + 32, 28, 22, { mass: 1.7, label: 'grannyL', ...o });
-        this.matter.add.constraint(head, torso, 4, 0.9, { stiffness: 0.7, damping: 0.05 });
-        this.matter.add.constraint(torso, legs, 4, 0.9, { stiffness: 0.7, damping: 0.05 });
-
-        const sH = this.add.image(x, y, 'head').setDepth(50);
-        const sT = this.add.image(x, y, 'torso').setDepth(49);
-        const sL = this.add.image(x, y, 'legs').setDepth(48);
-        return { head, torso, legs, sH, sT, sL };
+      launch(vx, vy) {
+        this.mesh.visible = true;
+        this.parts.forEach(p => { p.vel.set(vx, vy, 0); p.grounded = false; });
       }
-
-      parts(g) { return g ? [g.head, g.torso, g.legs] : []; }
-      syncGranny() {
-        if (!this.granny) return;
-        const g = this.granny;
-        const map = [[g.head, g.sH], [g.torso, g.sT], [g.legs, g.sL]];
-        map.forEach(([b, s]) => {
-          s.setPosition(b.position.x, b.position.y).setRotation(b.angle);
-          s.setDepth(40 + (b.position.y | 0));
-        });
+      step(dt) {
+        this.parts.forEach(p => p.step(dt));
+        // constraints (упрощённые пружины)
+        this.constrain(this.head, this.torso, 0.85, dt);
+        this.constrain(this.torso, this.legs, 0.85, dt);
+        // sync mesh
+        const h = this.mesh.userData.head;
+        const t = this.mesh.userData.torso;
+        const l = this.mesh.userData.legs;
+        this.mesh.position.copy(this.torso.pos);
+        h.position.set(this.head.pos.x - this.torso.pos.x, this.head.pos.y - this.torso.pos.y + 0.75, 0);
+        h.rotation.z = this.head.rot;
+        t.rotation.z = this.torso.rot;
+        l.position.set(this.legs.pos.x - this.torso.pos.x, this.legs.pos.y - this.torso.pos.y - 0.15, 0);
+        l.rotation.z = this.legs.rot;
+        this.mesh.rotation.y = 0;
       }
-
-      onDown(p) {
-        if (this.phase === 'end') return;
-        if (this.phase === 'fly') { this.fart(); return; }
-        this.dragging = true;
-        this.lblHint.setVisible(false);
-        this.onMove(p);
+      constrain(a, b, dist, dt) {
+        const dx = a.pos.x - b.pos.x, dy = a.pos.y - b.pos.y;
+        const d = Math.hypot(dx, dy) || 0.01;
+        const f = (d - dist) * 28 * dt;
+        const nx = dx / d, ny = dy / d;
+        a.vel.x -= nx * f; a.vel.y -= ny * f;
+        b.vel.x += nx * f; b.vel.y += ny * f;
+        a.rotV += (b.rot - a.rot) * 2 * dt;
+        b.rotV += (a.rot - b.rot) * 2 * dt;
       }
-
-      onMove(p) {
-        if (!this.dragging || this.phase !== 'aim') return;
-        const w = this.wpos(p);
-        const m = this.muzzle();
-        let dx = m.x - w.x, dy = m.y - w.y;
-        let dist = Math.min(Math.hypot(dx, dy), MAX_PULL);
-        if (dist < 8) { this.pull = 0; this.aimGfx.clear(); return; }
-        const ang = Math.atan2(dy, dx);
-        this.pull = dist / MAX_PULL;
-        this.pullAng = ang;
-        this.cannonSpr.setAngle(Phaser.Math.RadToDeg(ang) + 90);
-
-        const fx = m.x + Math.cos(ang) * dist;
-        const fy = m.y + Math.sin(ang) * dist;
-        const g = this.aimGfx;
-        g.clear();
-        g.lineStyle(5, 0xff6f00, 1); g.lineBetween(m.x, m.y, fx, fy);
-        g.fillStyle(0xff6f00, 1); g.fillCircle(fx, fy, 10);
-        g.fillStyle(0x000000, 0.4); g.fillRoundedRect(CX - 65, CY - 50, 130, 14, 5);
-        const col = this.pull < 0.5 ? 0x66bb6a : this.pull < 0.8 ? 0xffca28 : 0xef5350;
-        g.fillStyle(col, 1); g.fillRoundedRect(CX - 65, CY - 50, 130 * this.pull, 14, 5);
-      }
-
-      onUp() {
-        if (!this.dragging || this.phase !== 'aim') return;
-        this.dragging = false;
-        if (this.pull < 0.05) { this.aimGfx.clear(); return; }
-        this.fire();
-      }
-
-      fire() {
-        this.phase = 'fly';
-        this.aimGfx.clear();
-        this.groundHit = false;
-        this.stall = 0;
-        this.flyT = this.time.now;
-        this.fartUsed = false;
-
-        const m = this.muzzle();
-        const spd = 20 + this.pull * 30;
-        const vx = Math.cos(this.pullAng) * spd;
-        const vy = Math.sin(this.pullAng) * spd;
-
-        this.granny = this.spawnGranny(m.x, m.y);
-        this.parts(this.granny).forEach(b => this.matter.body.setVelocity(b, { x: vx, y: vy }));
-
-        this.add.circle(m.x, m.y, 16, 0xffee58, 0.9).setDepth(60)
-          .setScale(1).setAlpha(1);
-        this.cameras.main.startFollow(this.granny.sT, true, 0.1, 0.1, 0, -80);
-        this.btnFart.setVisible(true);
-      }
-
-      fart() {
-        if (this.phase !== 'fly' || this.fartUsed || !this.granny) return;
-        this.fartUsed = true;
-        this.btnFart.setVisible(false);
-        const t = this.granny.torso;
-        const sp = Math.hypot(t.velocity.x, t.velocity.y) || 1;
-        const bx = (t.velocity.x / sp) * 14, by = (t.velocity.y / sp) * 14;
-        this.parts(this.granny).forEach((b, i) => {
+      boost(fx, fy) {
+        this.parts.forEach((p, i) => {
           const k = i === 2 ? 1.2 : 1;
-          this.matter.body.setVelocity(b, { x: b.velocity.x + bx * k, y: b.velocity.y + by * k - 1 });
-        });
-        const p = this.granny.legs.position;
-        this.add.circle(p.x, p.y, 14, 0xc8e6c9, 0.7).setDepth(55);
-      }
-
-      onCollide(ev) {
-        if (!this.granny) return;
-        ev.pairs.forEach(({ bodyA, bodyB }) => {
-          const la = bodyA.label, lb = bodyB.label;
-          const gp = (la && la.startsWith('granny')) ? bodyA : (lb && lb.startsWith('granny')) ? bodyB : null;
-          if (!gp) return;
-          const ob = gp === bodyA ? bodyB : bodyA;
-          const id = ob.id + ob.label;
-
-          if (la === 'ground' || lb === 'ground') this.groundHit = true;
-
-          if ((la === 'tramp' || lb === 'tramp') && !this.cd.has(id)) {
-            this.cd.add(id); this.time.delayedCall(300, () => this.cd.delete(id));
-            this.parts(this.granny).forEach(b => this.matter.body.setVelocity(b, { x: b.velocity.x * 1.05, y: -14 }));
-          }
-          if ((la === 'fan' || lb === 'fan') && !this.cd.has(id)) {
-            this.cd.add(id); this.time.delayedCall(200, () => this.cd.delete(id));
-            this.parts(this.granny).forEach(b => this.matter.body.setVelocity(b, { x: b.velocity.x + 4, y: b.velocity.y - 6 }));
-          }
-          if ((la === 'crow' || lb === 'crow') && !this.cd.has(id)) {
-            this.cd.add(id); this.time.delayedCall(400, () => this.cd.delete(id));
-            const a = Math.random() * 6.28;
-            this.parts(this.granny).forEach(b => this.matter.body.setVelocity(b, { x: b.velocity.x + Math.cos(a) * 4, y: b.velocity.y + Math.sin(a) * 4 }));
-          }
-          if (la === 'coin' || lb === 'coin') {
-            const coinB = la === 'coin' ? bodyA : bodyB;
-            const pr = this.props.find(p => p.kind === 'coin' && p.body === coinB && !p.got);
-            if (pr && !this.cd.has(id)) {
-              this.cd.add(id); pr.got = true;
-              this.coins += 10;
-              this.lblCoin.setText(this.coins + ' 🪙');
-              pr.spr.destroy();
-              this.matter.world.remove(pr.body);
-              this.add.text(pr.x, pr.y - 20, '+10', { fontSize: '22px', color: '#ffee58', stroke: '#000', strokeThickness: 3 }).setOrigin(0.5).setDepth(60);
-            }
-          }
+          p.vel.x += fx * k; p.vel.y += fy * k;
         });
       }
-
-      distM() {
-        return this.granny ? Math.max(0, (this.granny.torso.position.x - CX) / 10) : 0;
+      speed() {
+        return this.parts.reduce((s, p) => s + p.vel.length(), 0) / 3;
       }
+      dispose() { scene.remove(this.mesh); }
+    }
 
-      endRun() {
-        if (this.phase === 'end') return;
-        this.phase = 'end';
-        this.matter.world.pause();
-        this.cameras.main.stopFollow();
-        this.btnFart.setVisible(false);
-        this.matter.world.off('collisionstart', this.onCollide, this);
-
-        const d = Math.floor(this.distM());
-        const old = parseInt(localStorage.getItem(STORE.rec) || '0');
-        if (d > old) localStorage.setItem(STORE.rec, String(d));
-
-        this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.75).setScrollFactor(0).setDepth(200);
-        this.add.text(W / 2, H / 2 - 120, 'Итог', { fontSize: '40px', color: '#fff', fontStyle: 'bold' }).setOrigin(0.5).setScrollFactor(0).setDepth(201);
-        this.add.text(W / 2, H / 2 - 40, d + ' м  |  🪙 ' + this.coins, { fontSize: '28px', color: '#fff' }).setOrigin(0.5).setScrollFactor(0).setDepth(201);
-
-        const again = this.add.rectangle(W / 2, H / 2 + 60, 240, 56, 0x43a047).setScrollFactor(0).setDepth(201).setInteractive();
-        this.add.text(W / 2, H / 2 + 60, 'Ещё раз', { fontSize: '24px', color: '#fff' }).setOrigin(0.5).setScrollFactor(0).setDepth(202);
-        again.on('pointerdown', () => this.scene.restart());
-
-        const menu = this.add.rectangle(W / 2, H / 2 + 140, 240, 56, 0x1e88e5).setScrollFactor(0).setDepth(201).setInteractive();
-        this.add.text(W / 2, H / 2 + 140, 'Меню', { fontSize: '24px', color: '#fff' }).setOrigin(0.5).setScrollFactor(0).setDepth(202);
-        menu.on('pointerdown', () => this.scene.start('Menu'));
+    // ─── Объекты мира ───────────────────────────────────────
+    const props = [];
+    function addTramp(x) {
+      const g = new THREE.Group();
+      g.add(mesh(new THREE.BoxGeometry(3.5, 0.25, 2), Mat.tramp));
+      const frame = mesh(new THREE.BoxGeometry(3.8, 0.15, 2.2), Mat.metal);
+      frame.position.y = -0.3;
+      g.add(frame);
+      g.position.set(x, 0.35, 0);
+      scene.add(g);
+      props.push({ kind: 'tramp', x, mesh: g, r: 2 });
+    }
+    function addFan(x) {
+      const g = new THREE.Group();
+      const box = mesh(new THREE.BoxGeometry(1.8, 1.8, 0.6), Mat.fan);
+      g.add(box);
+      const blades = new THREE.Group();
+      for (let i = 0; i < 4; i++) {
+        const b = mesh(new THREE.BoxGeometry(1.4, 0.15, 0.4), new THREE.MeshStandardMaterial({ color: 0xeceff1 }));
+        b.rotation.z = i * Math.PI / 2;
+        blades.add(b);
       }
+      g.add(blades);
+      g.userData.blades = blades;
+      g.position.set(x, 2.5, 0);
+      scene.add(g);
+      props.push({ kind: 'fan', x, mesh: g, blades });
+    }
+    function addCoin(x, y) {
+      const c = mesh(new THREE.CylinderGeometry(0.35, 0.35, 0.08, 20), Mat.coin);
+      c.rotation.x = Math.PI / 2;
+      c.position.set(x, y || 1.5 + Math.random() * 4, 0);
+      scene.add(c);
+      props.push({ kind: 'coin', x, y: c.position.y, mesh: c, taken: false });
+    }
+    function buildWorld() {
+      let x = 25;
+      while (x < CFG.worldLen - 30) {
+        const r = Math.random();
+        if (r < 0.2) addTramp(x);
+        else if (r < 0.35) addFan(x);
+        else if (r < 0.65) { const n = 2 + (Math.random() * 3 | 0); for (let i = 0; i < n; i++) addCoin(x + i * 1.8); }
+        else addCoin(x);
+        x += 12 + Math.random() * 14;
+      }
+    }
+    buildWorld();
 
-      update(time) {
-        this.props.forEach(p => {
-          if (p.kind === 'crow') {
-            const ny = 700 + Math.sin((time - p.t0) / 350) * 40;
-            this.matter.body.setPosition(p.body, { x: p.x, y: ny });
-            p.spr.setPosition(p.x, ny);
-          }
-          if (p.kind === 'fan') p.spr.setAngle(time / 30);
-          if (p.kind === 'coin' && !p.got) p.spr.setY(p.y + Math.sin(time / 200) * 4);
-        });
+    // ─── Игра ───────────────────────────────────────────────
+    let phase = 'menu';
+    let granny = null;
+    let coinCount = 0;
+    let fartUsed = false;
+    let stall = 0;
+    let flyT = 0;
+    let dragging = false;
+    let pull = 0, pullAng = 0;
+    let aimLine = null;
+    let trampCd = new Set();
 
-        if (this.granny) {
-          this.syncGranny();
-          this.lblDist.setText(Math.floor(this.distM()) + ' м');
+    const slingGeo = new THREE.BufferGeometry();
+    const slingMat = new THREE.LineBasicMaterial({ color: 0xff6f00, linewidth: 3 });
+    const slingLine = new THREE.Line(slingGeo, slingMat);
+    slingLine.visible = false;
+    scene.add(slingLine);
 
-          if (this.phase === 'fly') {
-            const tx = this.granny.torso.position.x;
-            const ty = this.granny.torso.position.y;
-            if (tx > WORLD_W - 150 || ty < -200) { this.endRun(); return; }
+    function muzzlePos() {
+      const a = cannon.rotation.z;
+      const ox = CFG.cannonX, oy = 1.6;
+      return new THREE.Vector3(ox + Math.cos(a) * 4.6, oy + Math.sin(a) * 4.6, 0);
+    }
 
-            if (this.groundHit) {
-              const avg = this.parts(this.granny).reduce((s, b) => s + Math.hypot(b.velocity.x, b.velocity.y), 0) / 3;
-              if (avg < 0.4 && time - this.flyT > 400) {
-                this.stall += this.game.loop.delta;
-                if (this.stall > 700) this.endRun();
-              } else if (avg > 1.2) this.stall = 0;
-              if (ty < GY - 40 && this.granny.torso.velocity.y < 0) { this.groundHit = false; this.stall = 0; }
-            }
-          }
-        }
-        this.cameras.main.scrollX = Phaser.Math.Clamp(this.cameras.main.scrollX, 0, WORLD_W - W);
+    function clearAim() {
+      slingLine.visible = false;
+      dragging = false;
+    }
+
+    function getNDC(e) {
+      const r = renderer.domElement.getBoundingClientRect();
+      const cx = (e.clientX ?? e.touches?.[0]?.clientX) - r.left;
+      const cy = (e.clientY ?? e.touches?.[0]?.clientY) - r.top;
+      return {
+        x: (cx / r.width) * 2 - 1,
+        y: -(cy / r.height) * 2 + 1,
+        sx: cx, sy: cy
+      };
+    }
+
+  const raycaster = new THREE.Raycaster();
+    const aimPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0); // плоскость XY (вид сбоку)
+    const hitPt = new THREE.Vector3();
+
+    function screenToWorld(sx, sy) {
+      const ndc = getNDC({ clientX: sx, clientY: sy });
+      raycaster.setFromCamera(new THREE.Vector2(ndc.x, ndc.y), camera);
+      raycaster.ray.intersectPlane(aimPlane, hitPt);
+      return hitPt.clone();
+    }
+
+    function fire() {
+      phase = 'fly';
+      clearAim();
+      fartUsed = false;
+      stall = 0;
+      flyT = performance.now();
+      document.getElementById('fart-btn').style.display = 'block';
+
+      const m = muzzlePos();
+      const spd = CFG.minSpd + pull * (CFG.maxSpd - CFG.minSpd);
+      const vx = Math.cos(pullAng) * spd;
+      const vy = Math.sin(pullAng) * spd;
+
+      granny = new Ragdoll(m.x, m.y);
+      granny.launch(vx, vy);
+
+      // вспышка
+      const flash = mesh(new THREE.SphereGeometry(0.5, 12, 12), new THREE.MeshBasicMaterial({ color: 0xffee58 }));
+      flash.position.copy(m);
+      scene.add(flash);
+      setTimeout(() => scene.remove(flash), 120);
+    }
+
+    function fart() {
+      if (phase !== 'fly' || fartUsed || !granny) return;
+      fartUsed = true;
+      document.getElementById('fart-btn').style.display = 'none';
+      const t = granny.torso.vel;
+      const sp = t.length() || 1;
+      granny.boost((t.x / sp) * 10, (t.y / sp) * 10 + 2);
+      for (let i = 0; i < 4; i++) {
+        const s = mesh(new THREE.SphereGeometry(0.25, 8, 8), new THREE.MeshStandardMaterial({ color: 0xa5d6a7, transparent: true, opacity: 0.7 }), false);
+        s.position.copy(granny.legs.pos);
+        scene.add(s);
+        setTimeout(() => scene.remove(s), 400);
       }
     }
 
-    new Phaser.Game({
-      type: Phaser.AUTO,
-      width: W, height: H,
-      parent: 'game-container',
-      backgroundColor: '#42a5f5',
-      scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
-      physics: {
-        default: 'matter',
-        matter: { gravity: { y: 1.1 }, enableSleeping: false }
-      },
-      scene: [BootScene, MenuScene, GameScene]
+    function checkProps() {
+      if (!granny) return;
+      const px = granny.torso.pos.x, py = granny.torso.pos.y;
+      props.forEach(p => {
+        if (p.kind === 'coin' && !p.taken && Math.hypot(px - p.x, py - p.y) < 1.2) {
+          p.taken = true;
+          scene.remove(p.mesh);
+          coinCount += 10;
+          document.getElementById('coins').textContent = '🪙 ' + coinCount;
+        }
+        if (p.kind === 'tramp' && Math.abs(px - p.x) < 2 && py < 2.5 && granny.torso.vel.y < 0 && !trampCd.has(p.x)) {
+          trampCd.add(p.x);
+          setTimeout(() => trampCd.delete(p.x), 400);
+          granny.parts.forEach(b => { b.vel.y = 14; b.vel.x *= 1.05; });
+          p.mesh.scale.y = 0.6;
+          setTimeout(() => p.mesh.scale.y = 1, 150);
+        }
+        if (p.kind === 'fan' && Math.abs(px - p.x) < 2.5 && Math.abs(py - p.mesh.position.y) < 2.5) {
+          granny.parts.forEach(b => { b.vel.x += 0.25; b.vel.y += 0.35; });
+        }
+      });
+    }
+
+    function distM() {
+      return granny ? Math.max(0, (granny.torso.pos.x - CFG.cannonX) / 2) | 0 : 0;
+    }
+
+    function endRun() {
+      if (phase === 'end') return;
+      phase = 'end';
+      document.getElementById('fart-btn').style.display = 'none';
+      document.getElementById('hud').classList.add('hide');
+      document.getElementById('hint').classList.add('hide');
+
+      const d = distM();
+      const old = parseInt(localStorage.getItem(STORE) || '0');
+      if (d > old) localStorage.setItem(STORE, String(d));
+      document.getElementById('rec-val').textContent = Math.max(d, old);
+
+      document.getElementById('res-dist').textContent = d + ' м' + (d > old ? ' 🏆' : '');
+      document.getElementById('res-coins').textContent = 'Монеты: ' + coinCount;
+      document.getElementById('res-phrase').textContent = PHRASES[Math.random() * PHRASES.length | 0];
+      document.getElementById('results').classList.remove('hide');
+    }
+
+    function resetGame() {
+      if (granny) { granny.dispose(); granny = null; }
+      coinCount = 0;
+      trampCd.clear();
+      props.forEach(p => {
+        if (p.kind === 'coin' && p.taken) {
+          p.taken = false;
+          p.mesh.rotation.set(Math.PI / 2, 0, 0);
+          p.mesh.position.set(p.x, p.y, 0);
+          scene.add(p.mesh);
+        }
+      });
+      cannon.rotation.z = Math.PI / 4;
+      camera.position.set(-12, 14, 22);
+      document.getElementById('coins').textContent = '🪙 0';
+      document.getElementById('dist').textContent = '0 м';
+      document.getElementById('results').classList.add('hide');
+      document.getElementById('hud').classList.remove('hide');
+      document.getElementById('hint').classList.remove('hide');
+      document.getElementById('hint').style.opacity = '0.9';
+      phase = 'aim';
+    }
+
+    // ─── Ввод ───────────────────────────────────────────────
+    function onDown(e) {
+      e.preventDefault();
+      if (phase === 'fly') { fart(); return; }
+      if (phase !== 'aim') return;
+      dragging = true;
+      document.getElementById('hint').style.opacity = '0.4';
+      onMove(e);
+    }
+    function onMove(e) {
+      if (!dragging || phase !== 'aim') return;
+      e.preventDefault();
+      const r = renderer.domElement.getBoundingClientRect();
+      const ndc = getNDC(e);
+      raycaster.setFromCamera(new THREE.Vector2(ndc.x, ndc.y), camera);
+      raycaster.ray.intersectPlane(aimPlane, hitPt);
+
+      const m = muzzlePos();
+      let dx = m.x - hitPt.x, dy = m.y - hitPt.y;
+      let dist = Math.min(Math.hypot(dx, dy), CFG.maxPull);
+      if (dist < 0.5) { pull = 0; slingLine.visible = false; return; }
+      pullAng = Math.atan2(dy, dx);
+      pull = dist / CFG.maxPull;
+      cannon.rotation.z = pullAng;
+
+      const ex = m.x + Math.cos(pullAng) * dist;
+      const ey = m.y + Math.sin(pullAng) * dist;
+      slingGeo.setFromPoints([m, new THREE.Vector3(ex, ey, 0)]);
+      slingLine.visible = true;
+    }
+    function onUp(e) {
+      if (!dragging || phase !== 'aim') return;
+      dragging = false;
+      if (pull < 0.05) { clearAim(); return; }
+      fire();
+    }
+
+    renderer.domElement.addEventListener('pointerdown', onDown);
+    renderer.domElement.addEventListener('pointermove', onMove);
+    renderer.domElement.addEventListener('pointerup', onUp);
+    renderer.domElement.addEventListener('pointercancel', onUp);
+    document.getElementById('fart-btn').addEventListener('click', e => { e.stopPropagation(); fart(); });
+
+    document.getElementById('play-btn').onclick = () => {
+      document.getElementById('menu').classList.add('hide');
+      resetGame();
+    };
+    document.getElementById('again-btn').onclick = () => { resetGame(); };
+    document.getElementById('menu-btn').onclick = () => {
+      document.getElementById('results').classList.add('hide');
+      document.getElementById('hud').classList.add('hide');
+      document.getElementById('hint').classList.add('hide');
+      document.getElementById('menu').classList.remove('hide');
+      phase = 'menu';
+      if (granny) { granny.dispose(); granny = null; }
+    };
+
+    document.getElementById('rec-val').textContent = localStorage.getItem(STORE) || '0';
+    cannon.rotation.z = Math.PI / 4;
+
+    // ─── Цикл ───────────────────────────────────────────────
+    let lastT = performance.now();
+    function animate(now) {
+      requestAnimationFrame(animate);
+      const dt = Math.min((now - lastT) / 1000, 0.033);
+      lastT = now;
+
+      props.forEach(p => {
+        if (p.kind === 'fan' && p.blades) p.blades.rotation.z += dt * 8;
+        if (p.kind === 'coin' && !p.taken) p.mesh.rotation.y += dt * 3;
+      });
+
+      if (phase === 'fly' && granny) {
+        granny.step(dt);
+        checkProps();
+        document.getElementById('dist').textContent = distM() + ' м';
+
+        const tx = granny.torso.pos.x;
+        const ty = granny.torso.pos.y;
+        if (tx > CFG.worldLen - 20 || ty < -10) { endRun(); }
+
+        const grounded = granny.parts.some(p => p.grounded);
+        if (grounded && granny.speed() < 1.5 && now - flyT > 400) {
+          stall += dt * 1000;
+          if (stall > 700) endRun();
+        } else if (granny.speed() > 3) stall = 0;
+
+        camera.position.x += (tx - 18 - camera.position.x) * 0.07;
+        camera.position.y += (8 - camera.position.y) * 0.03;
+        camera.lookAt(tx + 10, 4, 0);
+      }
+
+      renderer.render(scene, camera);
+    }
+    animate(performance.now());
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
     });
   </script>
 </body>
