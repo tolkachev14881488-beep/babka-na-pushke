@@ -18,9 +18,15 @@
 //  БАБКА НА ПУШКЕ — мультяшная игра с уровнями
 // ═══════════════════════════════════════════════════════════════
 const W=720,H=1280,WORLD_W=8000;
-const GY=1180,CX=160,CY=GY-25,BARREL=130,MAX_PULL=200;
+const GY=1180,CX=160,CY=GY-25,BARREL=95,MAX_PULL=200;
 const SAVE='babkaSave';
 const FF="'Fredoka',Arial,sans-serif";
+const ASSET_BASE=(()=>{
+  const p=location.pathname;
+  if(p.endsWith('.html'))return p.slice(0,p.lastIndexOf('/')+1);
+  return p.endsWith('/')?p:p+'/';
+})();
+const GRANNY_SCALE=.55;
 
 const LEVELS=[
   {id:1,name:'Двор',goal:80,theme:'park',coins:3,tramps:0,fans:0,crows:0},
@@ -171,19 +177,52 @@ function bootTextures(scene){
     g.fillStyle(0xFFC107);g.fillTriangle(34,14,44,16,34,18);
     g.fillStyle(0xFFF);g.fillCircle(28,16,3);
   });
+  makeTex(scene,'granny',72,72,(g)=>{
+    g.fillStyle(0xFFCCBC);g.fillCircle(36,38,28);
+    g.fillStyle(0xB0BEC5);g.fillCircle(36,22,22);
+    g.fillStyle(0x222);g.fillCircle(30,38,4);g.fillCircle(42,38,4);
+    g.fillStyle(0xE91E63);g.fillRoundedRect(18,50,36,20,8);
+    g.fillStyle(0xD32F2F);g.fillTriangle(24,48,48,48,36,58);
+  });
+  makeTex(scene,'cannon',100,90,(g)=>{
+    g.fillStyle(0x5D4037);g.fillRoundedRect(8,68,84,18,6);
+    g.fillStyle(0x78909C);g.fillRoundedRect(36,14,28,58,8);
+    g.fillStyle(0xFFB300);g.fillCircle(50,14,12);
+  });
+}
+
+function shrinkTex(scene,key,maxW){
+  if(!scene.textures.exists(key))return;
+  const img=scene.textures.get(key).getSourceImage();
+  if(!img||!img.width)return;
+  const sc=Math.min(1,maxW/img.width);
+  const w=Math.max(1,Math.round(img.width*sc)),h=Math.max(1,Math.round(img.height*sc));
+  const c=document.createElement('canvas');c.width=w;c.height=h;
+  c.getContext('2d').drawImage(img,0,0,w,h);
+  const sm=key+'_sm';
+  if(scene.textures.exists(sm))scene.textures.remove(sm);
+  scene.textures.addCanvas(sm,c);
 }
 
 // ─── Boot ─────────────────────────────────────────────────────
 class Boot extends Phaser.Scene{
   constructor(){super('Boot');}
   preload(){
-    this.load.image('granny','assets/granny.png');
-    this.load.image('cannon','assets/cannon.png');
-    this.load.image('tramp','assets/tramp.png');
-    this.load.image('coin','assets/coin.png');
+    this.load.on('loaderror',file=>console.warn('asset fail',file&&file.key));
+    this.load.image('granny',ASSET_BASE+'assets/granny.png');
+    this.load.image('cannon',ASSET_BASE+'assets/cannon.png');
+    this.load.image('tramp',ASSET_BASE+'assets/tramp.png');
+    this.load.image('coin',ASSET_BASE+'assets/coin.png');
   }
   create(){
     bootTextures(this);
+    const ok=k=>this.textures.exists(k)&&!String(this.textures.get(k).key).includes('MISSING');
+    if(ok('granny'))shrinkTex(this,'granny',96);
+    if(ok('cannon'))shrinkTex(this,'cannon',110);
+    if(ok('tramp'))shrinkTex(this,'tramp',100);
+    if(ok('coin'))shrinkTex(this,'coin',40);
+    if(!this.textures.exists('granny_sm'))shrinkTex(this,'granny',96);
+    if(!this.textures.exists('cannon_sm'))shrinkTex(this,'cannon',110);
     this.scene.start('Menu');
   }
 }
@@ -197,9 +236,9 @@ class Menu extends Phaser.Scene{
       fontFamily:FF,fontSize:'52px',fontStyle:'bold',color:'#fff',
       stroke:'#E74C3C',strokeThickness:8,align:'center'
     }).setOrigin(.5);
-    const hero=this.add.image(W/2,H*.44,'granny').setScale(.28);
+    const hero=this.add.image(W/2,H*.44,'granny_sm').setScale(2.2).setDepth(5);
     this.tweens.add({targets:hero,y:hero.y-12,duration:1400,yoyo:true,repeat:-1,ease:'Sine.easeInOut'});
-    this.add.image(W/2+30,H*.56,'cannon').setScale(.2).setAngle(-8);
+    this.add.image(W/2+30,H*.56,'cannon_sm').setScale(1.6).setAngle(-8).setDepth(5);
     this.mkBtn(W/2,H-280,'▶  ИГРАТЬ',0x2ECC71,()=>this.scene.start('Levels'));
     this.mkBtn(W/2,H-190,'⭐  УРОВНИ',0x3498DB,()=>this.scene.start('Levels'));
     const s=loadSave();
@@ -216,14 +255,9 @@ class Menu extends Phaser.Scene{
     for(let i=0;i<4;i++)this.add.image(100+i*180,80+i*30,'cloud').setAlpha(.7).setScale(.8+i*.1);
   }
   mkBtn(x,y,t,col,fn){
-    const c=this.add.container(x,y);
-    const bg=this.add.graphics();
-    bg.fillStyle(0x000,.25);bg.fillRoundedRect(-130,22,260,66,16);
-    bg.fillStyle(col);bg.fillRoundedRect(-130,18,260,66,16);
-    c.add(bg);
-    c.add(this.add.text(0,50,t,{fontFamily:FF,fontSize:'28px',color:'#fff',fontStyle:'bold'}).setOrigin(.5));
-    c.setSize(260,66).setInteractive(new Phaser.Geom.Rectangle(-130,18,260,66),Phaser.Geom.Rectangle.Contains);
-    c.on('pointerdown',()=>{this.tweens.add({targets:c,scale:.95,duration:60,yoyo:true});fn();});
+    const r=this.add.rectangle(x,y,260,66,col).setStrokeStyle(4,0x2C1810).setDepth(100).setInteractive({useHandCursor:true});
+    const tx=this.add.text(x,y,t,{fontFamily:FF,fontSize:'28px',color:'#fff',fontStyle:'bold'}).setOrigin(.5).setDepth(101);
+    r.on('pointerdown',()=>{Sfx.ui();this.tweens.add({targets:[r,tx],scale:.95,duration:60,yoyo:true});fn();});
   }
 }
 
@@ -255,8 +289,8 @@ class Levels extends Phaser.Scene{
         let st='';
         for(let s=0;s<3;s++)st+=s<stars?'⭐':'☆';
         box.add(this.add.text(0,58,st,{fontSize:'16px'}).setOrigin(.5));
-        box.setSize(sw,sh).setInteractive(new Phaser.Geom.Rectangle(-sw/2,-sh/2,sw,sh),Phaser.Geom.Rectangle.Contains);
-        box.on('pointerdown',()=>this.scene.start('Game',{level:lv.id}));
+        box.setSize(sw,sh).setInteractive({useHandCursor:true}).setDepth(10);
+        box.on('pointerdown',()=>{Sfx.ui();this.scene.start('Game',{level:lv.id});});
       }
     });
     this.mkBack();
@@ -280,8 +314,11 @@ class Game extends Phaser.Scene{
     this.theme=THEMES[this.lv.theme];
 
     this.buildWorld();
-    this.cannon=this.add.image(CX,CY,'cannon').setOrigin(.5,.92).setDepth(30).setScale(.22);
+    this.cannon=this.add.image(CX,CY,'cannon_sm').setOrigin(.5,.88).setDepth(30).setScale(1.15);
     this.sling=this.add.graphics().setDepth(35);
+
+    this.input.setTopOnly(false);
+    this.input.addPointer(2);
 
     this.cameras.main.setBounds(0,0,WORLD_W,H);
     this.cameras.main.scrollX=0;
@@ -300,15 +337,18 @@ class Game extends Phaser.Scene{
     this.input.on('pointerup',this.pUp,this);
     this.matter.world.on('collisionstart',this.onHit,this);
 
-    this.dustEmitter=this.add.particles(0,0,'dust',{
-      speed:{min:20,max:80},angle:{min:250,max:290},scale:{start:.4,end:0},
-      lifespan:400,quantity:6,emitting:false,tint:0xBCAAA4
-    }).setDepth(45);
-    this.sparkEmitter=this.add.particles(0,0,'spark',{
-      speed:{min:60,max:140},scale:{start:.35,end:0},lifespan:250,quantity:5,emitting:false
-    }).setDepth(55);
+    this.dustEmitter=this._particles('dust',{speed:{min:20,max:80},angle:{min:250,max:290},scale:{start:.4,end:0},lifespan:400,quantity:6,emitting:false,tint:0xBCAAA4},45);
+    this.sparkEmitter=this._particles('spark',{speed:{min:60,max:140},scale:{start:.35,end:0},lifespan:250,quantity:5,emitting:false},55);
 
     this.showLevelIntro();
+  }
+
+  _particles(tex,cfg,depth){
+    try{
+      return this.add.particles(0,0,tex,cfg).setDepth(depth);
+    }catch(e){
+      return{explode:()=>{},destroy:()=>{},setScrollFactor:()=>this};
+    }
   }
 
   showLevelIntro(){
@@ -379,8 +419,9 @@ class Game extends Phaser.Scene{
 
   squashGranny(sx,sy){
     if(!this.granny||!this.granny.sT)return;
+    const b=GRANNY_SCALE;
     this.tweens.add({
-      targets:this.granny.sT,scaleX:.14*sx,scaleY:.14*sy,
+      targets:this.granny.sT,scaleX:b*sx,scaleY:b*sy,
       duration:70,yoyo:true,ease:'Quad.easeOut'
     });
   }
@@ -399,7 +440,8 @@ class Game extends Phaser.Scene{
         p.spr.setPosition(p.body.position.x,p.body.position.y);
         if(d<28&&!this.cd.has(p.body.id+'coinMag')){
           this.cd.add(p.body.id+'coinMag');
-          this.tweens.add({targets:p.spr,scale:1.15,duration:80,yoyo:true});
+          const bs=p.spr.coinBase||1;
+          this.tweens.add({targets:p.spr,scale:bs*1.15,duration:80,yoyo:true});
         }
       }
     });
@@ -451,7 +493,7 @@ class Game extends Phaser.Scene{
     if(kind==='tramp'){
       const y=GY-8,tex=pick(['tramp','tramp2','tramp3']);
       const b=this.matter.add.rectangle(x,y,80,12,{isStatic:true,label:'tramp',restitution:1.1});
-      const s=this.add.image(x,y,tex).setDepth(15).setScale(tex==='tramp'?.065:1);
+      const s=this.add.image(x,y,tex==='tramp'?'tramp_sm':tex).setDepth(15).setScale(tex==='tramp'?1:1);
       this.props.push({kind,body:b,spr:s});
     }else if(kind==='fan'){
       const y=GY-85,tex=Math.random()<.4?'fan2':'fan';
@@ -467,7 +509,8 @@ class Game extends Phaser.Scene{
     }else{
       const y=Phaser.Math.Between(GY-220,GY-60);
       const b=this.matter.add.circle(x,y,14,{isStatic:true,isSensor:true,label:'coin'});
-      const s=this.add.image(x,y,'coin').setDepth(16).setScale(.03);
+      const s=this.add.image(x,y,'coin_sm').setDepth(16).setScale(1);
+      s.coinBase=1;
       this.tweens.add({targets:s,y:y-8,duration:600,yoyo:true,repeat:-1});
       this.tweens.add({targets:s,angle:360,duration:3000,repeat:-1});
       this.props.push({kind,body:b,spr:s,got:false});
@@ -487,9 +530,15 @@ class Game extends Phaser.Scene{
     const legs=this.matter.add.rectangle(x,y+30,26,20,{mass:1.7,label:'gL',...o});
     this.matter.add.constraint(head,torso,3,.9,{stiffness:.7,damping:.05});
     this.matter.add.constraint(torso,legs,3,.9,{stiffness:.7,damping:.05});
-    const sT=this.add.image(x,y-10,'granny').setDepth(50).setScale(.14);
-    this.matter.add.gameObject(sT,torso);
+    const sT=this.add.image(x,y-10,'granny_sm').setDepth(50).setScale(GRANNY_SCALE);
     return{head,torso,legs,sT};
+  }
+
+  syncGranny(){
+    if(!this.granny||!this.granny.sT)return;
+    const t=this.granny.torso;
+    this.granny.sT.setPosition(t.position.x,t.position.y-8);
+    this.granny.sT.setRotation(t.angle);
   }
 
   parts(g){return g?[g.head,g.torso,g.legs]:[];}
@@ -604,7 +653,7 @@ class Game extends Phaser.Scene{
           this.cd.add(id);pr.got=true;this.coins+=10;
           Sfx.coin();
           this.hudCoin.setText('🪙 '+this.coins);
-          this.tweens.add({targets:pr.spr,scale:1.8,alpha:0,duration:180,onComplete:()=>{pr.spr.destroy();this.matter.world.remove(pr.body);}});
+          this.tweens.add({targets:pr.spr,scale:(pr.spr.coinBase||1)*1.8,alpha:0,duration:180,onComplete:()=>{pr.spr.destroy();this.matter.world.remove(pr.body);}});
           this.sparkEmitter.explode(6,pr.spr.x,pr.spr.y);
           const pop=this.add.text(pr.spr.x,pr.spr.y-20,'+10',{fontSize:'22px',color:'#FFEB3B',stroke:'#000',strokeThickness:3}).setOrigin(.5).setDepth(60);
           this.tweens.add({targets:pop,y:pop.y-50,alpha:0,scale:1.3,duration:500,onComplete:()=>pop.destroy()});
@@ -714,6 +763,7 @@ class Game extends Phaser.Scene{
     this.props.filter(p=>p.kind==='fan').forEach(p=>p.spr.setAngle(time/25));
 
     if(this.granny){
+      this.syncGranny();
       this.hudDist.setText(this.distM()+' м');
       if(this.phase==='fly'){
         this.magnetCoins();
