@@ -3,635 +3,514 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Бабка на Пушке 3D</title>
+  <title>Бабка на Пушке</title>
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.js"></script>
   <style>
-    * { margin:0; padding:0; box-sizing:border-box; }
-    html, body { width:100%; height:100%; overflow:hidden; background:#0a1628; touch-action:none; font-family:'Segoe UI',Arial,sans-serif; }
-    #canvas-wrap { position:fixed; inset:0; }
-    canvas { display:block; width:100%; height:100%; }
-    .ui { position:fixed; left:0; right:0; pointer-events:none; z-index:10; color:#fff; text-shadow:0 2px 6px rgba(0,0,0,.7); }
-    #hud { top:16px; left:16px; font-size:22px; line-height:1.5; }
-    #hint { bottom:90px; left:0; right:0; text-align:center; font-size:18px; opacity:.9; }
-    .screen { position:fixed; inset:0; z-index:20; display:flex; flex-direction:column; align-items:center; justify-content:center;
-      background:linear-gradient(180deg,rgba(10,22,40,.92),rgba(20,50,90,.95)); pointer-events:auto; }
-    .screen.hide { display:none; }
-    .screen h1 { font-size:clamp(28px,6vw,44px); margin-bottom:8px; text-align:center; color:#fff; }
-    .screen .rec { color:#ffd54f; font-size:22px; margin-bottom:32px; }
-    .btn { background:linear-gradient(180deg,#66bb6a,#43a047); border:none; color:#fff; font-size:24px; font-weight:bold;
-      padding:16px 56px; border-radius:14px; cursor:pointer; box-shadow:0 6px 20px rgba(0,0,0,.4); pointer-events:auto; }
-    .btn:active { transform:scale(.96); }
-    .btn.sec { background:linear-gradient(180deg,#42a5f5,#1e88e5); margin-top:12px; font-size:20px; padding:12px 40px; }
-    #fart-btn { position:fixed; right:20px; bottom:100px; z-index:15; width:72px; height:72px; border-radius:50%;
-      background:linear-gradient(180deg,#ab47bc,#7b1fa2); border:3px solid #fff; font-size:28px; display:none;
-      pointer-events:auto; box-shadow:0 4px 16px rgba(0,0,0,.5); cursor:pointer; }
-    #results p { font-size:22px; color:#e3f2fd; margin:8px 0; text-align:center; }
-    #results .big { font-size:32px; color:#ff7043; font-weight:bold; }
+    *{margin:0;padding:0} html,body{width:100%;height:100%;overflow:hidden;background:#1a1a2e;touch-action:none}
+    #game{width:100%;height:100%}
   </style>
 </head>
 <body>
-  <div id="canvas-wrap"></div>
-  <div id="hud" class="ui hide"><div id="dist">0 м</div><div id="coins">🪙 0</div></div>
-  <div id="hint" class="ui hide">👇 Тяни вниз от пушки и отпусти</div>
-  <button id="fart-btn" title="Пёрнуть">💨</button>
+<div id="game"></div>
+<script>
+// ═══════════════════════════════════════════════════════════════
+//  БАБКА НА ПУШКЕ — мультяшная игра с уровнями
+// ═══════════════════════════════════════════════════════════════
+const W=720,H=1280,WORLD_W=8000;
+const GY=1180,CX=160,CY=GY-25,BARREL=88,MAX_PULL=200;
+const SAVE='babkaSave';
 
-  <div id="menu" class="screen">
-    <h1>🧓 Бабка на Пушке</h1>
-    <p class="rec">Рекорд: <span id="rec-val">0</span> м</p>
-    <button class="btn" id="play-btn">ИГРАТЬ</button>
-  </div>
-  <div id="results" class="screen hide">
-    <h1>Результат</h1>
-    <p class="big" id="res-dist">0 м</p>
-    <p id="res-coins">Монеты: 0</p>
-    <p id="res-phrase"></p>
-    <button class="btn" id="again-btn">Ещё раз</button>
-    <button class="btn sec" id="menu-btn">Меню</button>
-  </div>
+const LEVELS=[
+  {id:1,name:'Двор',goal:80,theme:'park',coins:3,tramps:0,fans:0,crows:0},
+  {id:2,name:'Аллея',goal:120,theme:'park',coins:5,tramps:1,fans:0,crows:0},
+  {id:3,name:'Парк',goal:160,theme:'park',coins:6,tramps:2,fans:1,crows:0},
+  {id:4,name:'Город',goal:200,theme:'city',coins:8,tramps:2,fans:2,crows:1},
+  {id:5,name:'Улица',goal:250,theme:'city',coins:10,tramps:3,fans:2,crows:1},
+  {id:6,name:'Крыши',goal:300,theme:'city',coins:12,tramps:3,fans:3,crows:2},
+  {id:7,name:'Пляж',goal:350,theme:'beach',coins:14,tramps:4,fans:2,crows:2},
+  {id:8,name:'Побережье',goal:400,theme:'beach',coins:15,tramps:4,fans:3,crows:2},
+  {id:9,name:'Закат',goal:450,theme:'beach',coins:16,tramps:5,fans:3,crows:3},
+  {id:10,name:'Небоскрёбы',goal:500,theme:'city',coins:18,tramps:5,fans:4,crows:3},
+  {id:11,name:'Мост',goal:550,theme:'city',coins:20,tramps:6,fans:4,crows:3},
+  {id:12,name:'Космодром',goal:600,theme:'space',coins:22,tramps:6,fans:5,crows:4},
+  {id:13,name:'Орбита',goal:650,theme:'space',coins:24,tramps:7,fans:5,crows:4},
+  {id:14,name:'Луна',goal:700,theme:'space',coins:26,tramps:8,fans:6,crows:5},
+  {id:15,name:'Галактика',goal:800,theme:'space',coins:30,tramps:10,fans:7,crows:6},
+];
 
-  <script type="importmap">
-  { "imports": {
-    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
-  }}
-  </script>
-  <script type="module">
-    import * as THREE from 'three';
+const THEMES={
+  park:{sky1:0x5DADE2,sky2:0xAED6F1,hill:0x58D68D,hill2:0x27AE60,ground:0x7DCEA0,dirt:0x8B6914},
+  city:{sky1:0x5D6D7E,sky2:0xABB2B9,hill:0x95A5A6,hill2:0x7F8C8D,ground:0xBDC3C7,dirt:0x566573},
+  beach:{sky1:0x3498DB,sky2:0x85C1E9,hill:0xF4D03F,hill2:0xE59866,ground:0xF9E79F,dirt:0xD4AC6E},
+  space:{sky1:0x1A1A2E,sky2:0x2C3E50,hill:0x5B2C6F,hill2:0x884EA0,ground:0x4A235A,dirt:0x1C2833},
+};
 
-    // ─── Конфиг ─────────────────────────────────────────────
-    const CFG = {
-      worldLen: 500,
-      groundY: 0,
-      cannonX: 8,
-      maxPull: 12,
-      minSpd: 18,
-      maxSpd: 42,
-      gravity: -14
-    };
-    const PHRASES = ['Бабка-звезда!','Внучок, я улетела!','Костей не соберёшь!','Ой, спина!'];
-    const STORE = 'grannyRecord3d';
+// ─── Сохранение ───────────────────────────────────────────────
+function loadSave(){
+  try{return JSON.parse(localStorage.getItem(SAVE))||{unlocked:1,stars:{}};}catch(e){return{unlocked:1,stars:{}};}
+}
+function writeSave(s){localStorage.setItem(SAVE,JSON.stringify(s));}
 
-    // ─── Рендерер и сцена ───────────────────────────────────
-    const wrap = document.getElementById('canvas-wrap');
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.15;
-    wrap.appendChild(renderer.domElement);
+// ─── Генерация мультяшных текстур ────────────────────────────
+function makeTex(scene,key,w,h,draw){
+  if(scene.textures.exists(key))return;
+  const g=scene.make.graphics({add:false});
+  draw(g,w,h);
+  g.generateTexture(key,w,h);
+  g.destroy();
+}
 
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x87ceeb);
-    scene.fog = new THREE.Fog(0x87ceeb, 40, 280);
-
-    const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.5, 500);
-    camera.position.set(-12, 14, 22);
-    camera.lookAt(15, 4, 0);
-
-    // ─── Свет ───────────────────────────────────────────────
-    scene.add(new THREE.HemisphereLight(0xb3e5fc, 0x558b2f, 0.55));
-    const sun = new THREE.DirectionalLight(0xfff5e0, 1.35);
-    sun.position.set(-30, 50, 25);
-    sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.camera.near = 1;
-    sun.shadow.camera.far = 200;
-    sun.shadow.camera.left = -80;
-    sun.shadow.camera.right = 120;
-    sun.shadow.camera.top = 50;
-    sun.shadow.camera.bottom = -10;
-    sun.shadow.bias = -0.0003;
-    scene.add(sun);
-
-    // ─── Материалы ──────────────────────────────────────────
-    const Mat = {
-      grass: new THREE.MeshStandardMaterial({ color: 0x4caf50, roughness: 0.95 }),
-      dirt: new THREE.MeshStandardMaterial({ color: 0x6d4c41, roughness: 1 }),
-      wood: new THREE.MeshStandardMaterial({ color: 0x8d6e63, roughness: 0.85 }),
-      woodD: new THREE.MeshStandardMaterial({ color: 0x5d4037, roughness: 0.9 }),
-      metal: new THREE.MeshStandardMaterial({ color: 0x78909c, metalness: 0.65, roughness: 0.35 }),
-      brass: new THREE.MeshStandardMaterial({ color: 0xffb300, metalness: 0.8, roughness: 0.25 }),
-      skin: new THREE.MeshStandardMaterial({ color: 0xffccbc, roughness: 0.75 }),
-      hair: new THREE.MeshStandardMaterial({ color: 0xb0bec5, roughness: 0.9 }),
-      dress: new THREE.MeshStandardMaterial({ color: 0xec407a, roughness: 0.8 }),
-      scarf: new THREE.MeshStandardMaterial({ color: 0xd32f2f, roughness: 0.85 }),
-      legs: new THREE.MeshStandardMaterial({ color: 0x7e57c2, roughness: 0.8 }),
-      boot: new THREE.MeshStandardMaterial({ color: 0x3e2723, roughness: 0.7 }),
-      tramp: new THREE.MeshStandardMaterial({ color: 0x00e676, roughness: 0.6 }),
-      coin: new THREE.MeshStandardMaterial({ color: 0xffd700, metalness: 0.9, roughness: 0.2 }),
-      fan: new THREE.MeshStandardMaterial({ color: 0x607d8b, roughness: 0.5, metalness: 0.3 }),
-      hill: new THREE.MeshStandardMaterial({ color: 0x66bb6a, roughness: 1 }),
-      hill2: new THREE.MeshStandardMaterial({ color: 0x43a047, roughness: 1 }),
-      cloud: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, transparent: true, opacity: 0.92 })
-    };
-
-    function mesh(geo, mat, cast = true) {
-      const m = new THREE.Mesh(geo, mat);
-      m.castShadow = cast;
-      m.receiveShadow = true;
-      return m;
+function bootTextures(scene){
+  const outline=(g,x,y,r,col,ol=0x2C1810)=>{
+    g.fillStyle(ol);g.fillCircle(x,y,r+2);
+    g.fillStyle(col);g.fillCircle(x,y,r);
+  };
+  makeTex(scene,'granny',64,64,(g)=>{
+    g.fillStyle(0x2C1810);g.fillCircle(32,30,28);
+    g.fillStyle(0xFFCCBC);g.fillCircle(32,32,24);
+    g.fillStyle(0xB0BEC5);g.fillCircle(32,18,20);
+    g.fillStyle(0xFFCCBC);g.fillCircle(32,34,22);
+    outline(g,24,32,6,0xFFF);outline(g,40,32,6,0xFFF);
+    g.fillStyle(0x222);g.fillCircle(25,32,3);g.fillCircle(41,32,3);
+    g.lineStyle(3,0x37474F);g.strokeCircle(24,32,9);g.strokeCircle(40,32,9);
+    g.fillStyle(0xE91E63);g.fillRoundedRect(14,44,36,22,8);
+    g.fillStyle(0xAD1457);g.fillCircle(22,52,3);g.fillCircle(32,56,3);g.fillCircle(42,50,3);
+    g.fillStyle(0xD32F2F);g.fillTriangle(18,40,46,40,32,50);
+  });
+  makeTex(scene,'cannon',110,120,(g)=>{
+    g.fillStyle(0x2C1810);g.fillRoundedRect(8,88,94,28,8);
+    g.fillStyle(0xA1887F);g.fillRoundedRect(12,82,86,22,6);
+    outline(g,28,108,16,0x424242);outline(g,78,108,16,0x424242);
+    g.fillStyle(0x78909C);g.fillRoundedRect(40,12,34,78,6);
+    g.fillStyle(0xFFB300);g.fillCircle(57,12,16);
+    g.fillStyle(0x222);g.fillCircle(57,12,7);
+  });
+  makeTex(scene,'tramp',90,36,(g)=>{
+    g.fillStyle(0x2C1810);g.fillRect(0,24,90,8);
+    g.fillStyle(0x00E676);g.fillRoundedRect(4,6,82,20,6);
+    g.lineStyle(2,0x00C853);for(let i=0;i<5;i++)g.strokeRect(8+i*16,10,12,12);
+  });
+  makeTex(scene,'fan',56,56,(g)=>{
+    g.fillStyle(0x2C1810);g.fillRoundedRect(0,0,56,56,8);
+    g.fillStyle(0x607D8B);g.fillRoundedRect(3,3,50,50,6);
+    g.fillStyle(0xECEFF1);g.fillEllipse(28,28,22,8);
+  });
+  makeTex(scene,'coin',36,36,(g)=>{
+    g.fillStyle(0xF57F17);g.fillCircle(18,18,17);
+    g.fillStyle(0xFFEB3B);g.fillCircle(18,18,14);
+    g.fillStyle(0xFFF9C4);g.fillEllipse(14,14,6,5);
+    g.lineStyle(2,0xE65100);g.strokeCircle(18,18,14);
+  });
+  makeTex(scene,'crow',48,32,(g)=>{
+    g.fillStyle(0x111);g.fillEllipse(20,18,26,14);
+    g.fillStyle(0xFF9800);g.fillTriangle(34,14,44,16,34,18);
+  });
+  makeTex(scene,'star',40,40,(g)=>{
+    const cx=20,cy=20,outer=16,inner=7;
+    g.fillStyle(0xFFD700);g.beginPath();
+    for(let i=0;i<10;i++){
+      const r=i%2?inner:outer,a=Math.PI/2+i*Math.PI/5;
+      g.lineTo(cx+Math.cos(a)*r,cy-Math.sin(a)*r);
     }
+    g.closePath();g.fillPath();
+    g.lineStyle(2,0xF9A825);g.strokePath();
+  });
+  makeTex(scene,'cloud',80,40,(g)=>{
+    g.fillStyle(0xFFF);
+    g.fillEllipse(25,25,22,16);g.fillEllipse(45,22,26,18);g.fillEllipse(60,26,20,14);
+  });
+}
 
-    // ─── Окружение ──────────────────────────────────────────
-  const ground = mesh(new THREE.BoxGeometry(CFG.worldLen, 1.2, 40), Mat.grass);
-    ground.position.set(CFG.worldLen / 2, -0.6, 0);
-    scene.add(ground);
-    const dirt = mesh(new THREE.BoxGeometry(CFG.worldLen, 0.8, 40), Mat.dirt, false);
-    dirt.position.set(CFG.worldLen / 2, -1.4, 0);
-    dirt.receiveShadow = true;
-    scene.add(dirt);
+// ─── Boot ─────────────────────────────────────────────────────
+class Boot extends Phaser.Scene{
+  constructor(){super('Boot');}
+  create(){
+    bootTextures(this);
+    this.scene.start('Menu');
+  }
+}
 
-    // холмы (декор)
-    for (let i = 0; i < 40; i++) {
-      const h = mesh(new THREE.ConeGeometry(8 + Math.random() * 12, 6 + Math.random() * 10, 6), i % 2 ? Mat.hill : Mat.hill2, false);
-      h.position.set(i * 14 + Math.random() * 8, -0.5, -8 - Math.random() * 6);
-      h.rotation.y = Math.random() * Math.PI;
-      scene.add(h);
-    }
-    // облака
-    for (let i = 0; i < 15; i++) {
-      const c = new THREE.Group();
-      for (let j = 0; j < 4; j++) {
-        const p = mesh(new THREE.SphereGeometry(1.5 + Math.random(), 10, 8), Mat.cloud, false);
-        p.position.set(j * 2 - 3, Math.random() * 0.5, Math.random() * 1.5);
-        c.add(p);
+// ─── Меню ─────────────────────────────────────────────────────
+class Menu extends Phaser.Scene{
+  constructor(){super('Menu');}
+  create(){
+    this.drawBg('park');
+    this.add.text(W/2,140,'БАБКА НА\nПУШКЕ',{
+      fontFamily:'Arial',fontSize:'52px',fontStyle:'bold',color:'#fff',
+      stroke:'#E74C3C',strokeThickness:8,align:'center'
+    }).setOrigin(.5);
+    this.add.image(W/2,H*.45,'granny').setScale(2.2);
+    this.add.image(W/2-60,H*.58,'cannon').setScale(1.3);
+    this.mkBtn(W/2,H-280,'▶  ИГРАТЬ',0x2ECC71,()=>this.scene.start('Levels'));
+    this.mkBtn(W/2,H-190,'⭐  УРОВНИ',0x3498DB,()=>this.scene.start('Levels'));
+    const s=loadSave();
+    const total=Object.values(s.stars).reduce((a,b)=>a+b,0);
+    this.add.text(W/2,H-100,`Звёзд: ${total}  |  Уровень ${s.unlocked}/${LEVELS.length}`,{
+      fontSize:'20px',color:'#FDFEFE'
+    }).setOrigin(.5);
+  }
+  drawBg(theme){
+    const t=THEMES[theme];
+    const g=this.add.graphics();
+    g.fillGradientStyle(t.sky1,t.sky1,t.sky2,t.sky2,1);
+    g.fillRect(0,0,W,H);
+    for(let i=0;i<4;i++)this.add.image(100+i*180,80+i*30,'cloud').setAlpha(.7).setScale(.8+i*.1);
+  }
+  mkBtn(x,y,t,col,fn){
+    const c=this.add.container(x,y);
+    const bg=this.add.graphics();
+    bg.fillStyle(0x000,.25);bg.fillRoundedRect(-130,22,260,66,16);
+    bg.fillStyle(col);bg.fillRoundedRect(-130,18,260,66,16);
+    c.add(bg);
+    c.add(this.add.text(0,50,t,{fontSize:'28px',color:'#fff',fontStyle:'bold'}).setOrigin(.5));
+    c.setSize(260,66).setInteractive(new Phaser.Geom.Rectangle(-130,18,260,66),Phaser.Geom.Rectangle.Contains);
+    c.on('pointerdown',()=>{this.tweens.add({targets:c,scale:.95,duration:60,yoyo:true});fn();});
+  }
+}
+
+// ─── Выбор уровня ─────────────────────────────────────────────
+class Levels extends Phaser.Scene{
+  constructor(){super('Levels');}
+  create(){
+    const t=THEMES.park;
+    const g=this.add.graphics();
+    g.fillGradientStyle(t.sky1,t.sky1,t.sky2,t.sky2,1);g.fillRect(0,0,W,H);
+    this.add.text(W/2,70,'ВЫБЕРИ УРОВЕНЬ',{fontSize:'36px',color:'#fff',fontStyle:'bold',stroke:'#2C3E50',strokeThickness:5}).setOrigin(.5);
+    const save=loadSave();
+    const cols=3,sw=200,sh=130,gap=16,sx=(W-(cols*sw+(cols-1)*gap))/2+sw/2,sy=160;
+    LEVELS.forEach((lv,i)=>{
+      const col=i%cols,row=(i/col)|0;
+      const x=sx+col*(sw+gap),y=sy+row*(sh+gap);
+      const locked=lv.id>save.unlocked;
+      const stars=save.stars[lv.id]||0;
+      const box=this.add.container(x,y);
+      const bg=this.add.graphics();
+      bg.fillStyle(locked?0x7F8C8D:0x2ECC71);bg.fillRoundedRect(-sw/2,-sh/2,sw,sh,14);
+      bg.lineStyle(3,0x2C1810);bg.strokeRoundedRect(-sw/2,-sh/2,sw,sh,14);
+      box.add(bg);
+      box.add(this.add.text(0,-30,lv.id,{fontSize:'32px',color:'#fff',fontStyle:'bold'}).setOrigin(.5));
+      box.add(this.add.text(0,5,lv.name,{fontSize:'18px',color:'#fff'}).setOrigin(.5));
+      box.add(this.add.text(0,35,`🎯 ${lv.goal} м`,{fontSize:'16px',color:'#FDFEFE'}).setOrigin(.5));
+      if(locked)box.add(this.add.text(0,0,'🔒',{fontSize:'36px'}).setOrigin(.5));
+      else{
+        let st='';
+        for(let s=0;s<3;s++)st+=s<stars?'⭐':'☆';
+        box.add(this.add.text(0,58,st,{fontSize:'16px'}).setOrigin(.5));
+        box.setSize(sw,sh).setInteractive(new Phaser.Geom.Rectangle(-sw/2,-sh/2,sw,sh),Phaser.Geom.Rectangle.Contains);
+        box.on('pointerdown',()=>this.scene.start('Game',{level:lv.id}));
       }
-      c.position.set(i * 35 + Math.random() * 20, 22 + Math.random() * 8, -15 - Math.random() * 10);
-      scene.add(c);
-    }
-
-    // ─── 3D Пушка ───────────────────────────────────────────
-    function buildCannon() {
-      const g = new THREE.Group();
-      const carriage = mesh(new THREE.BoxGeometry(3.2, 0.7, 2.2), Mat.woodD);
-      carriage.position.y = 0.35;
-      g.add(carriage);
-      const plank = mesh(new THREE.BoxGeometry(2.8, 0.25, 1.8), Mat.wood);
-      plank.position.y = 0.75;
-      g.add(plank);
-      [[-1, 0.5], [1.6, 0.5]].forEach(([x, z]) => {
-        const w = mesh(new THREE.CylinderGeometry(0.55, 0.55, 0.35, 16), Mat.metal);
-        w.rotation.z = Math.PI / 2;
-        w.position.set(x, 0.55, z);
-        g.add(w);
-        const rim = mesh(new THREE.TorusGeometry(0.55, 0.06, 8, 20), Mat.metal);
-        rim.rotation.y = Math.PI / 2;
-        rim.position.set(x, 0.55, z);
-        g.add(rim);
-      });
-      const barrel = mesh(new THREE.CylinderGeometry(0.35, 0.45, 4.5, 16), Mat.metal);
-      barrel.rotation.z = Math.PI / 2;
-      barrel.position.set(2.2, 1.6, 0);
-      g.add(barrel);
-      const ring = mesh(new THREE.TorusGeometry(0.5, 0.08, 10, 24), Mat.brass);
-      ring.position.set(4.35, 1.6, 0);
-      ring.rotation.y = Math.PI / 2;
-      g.add(ring);
-      const muzzle = mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.3, 12), new THREE.MeshStandardMaterial({ color: 0x212121 }));
-      muzzle.rotation.z = Math.PI / 2;
-      muzzle.position.set(4.6, 1.6, 0);
-      g.add(muzzle);
-      g.position.set(CFG.cannonX, 0.8, 0);
-      return g;
-    }
-
-    const cannon = buildCannon();
-    scene.add(cannon);
-
-    // ─── 3D Бабка (составная модель) ────────────────────────
-    function buildGrannyMesh() {
-      const g = new THREE.Group();
-      const headG = new THREE.Group();
-      const skull = mesh(new THREE.SphereGeometry(0.42, 20, 16), Mat.skin);
-      headG.add(skull);
-      const bun = mesh(new THREE.SphereGeometry(0.35, 14, 12), Mat.hair);
-      bun.position.set(0, 0.25, -0.15);
-      headG.add(bun);
-      const glassMat = new THREE.MeshStandardMaterial({ color: 0x37474f, metalness: 0.5, roughness: 0.3 });
-      [[-0.18, 0.05], [0.18, 0.05]].forEach(([x, y]) => {
-        const ring = mesh(new THREE.TorusGeometry(0.14, 0.02, 8, 20), glassMat);
-        ring.position.set(x, y, 0.32);
-        headG.add(ring);
-        const eye = mesh(new THREE.SphereGeometry(0.05, 8, 8), new THREE.MeshStandardMaterial({ color: 0x111 }));
-        eye.position.set(x, y, 0.36);
-        headG.add(eye);
-      });
-      const scarf = mesh(new THREE.ConeGeometry(0.45, 0.25, 12), Mat.scarf);
-      scarf.rotation.x = Math.PI;
-      scarf.position.set(0, -0.15, 0.1);
-      headG.add(scarf);
-      g.add(headG);
-      g.userData.head = headG;
-
-      const torso = mesh(new THREE.CapsuleGeometry(0.38, 0.7, 8, 16), Mat.dress);
-      torso.position.y = -0.75;
-      g.add(torso);
-      g.userData.torso = torso;
-
-      const legsG = new THREE.Group();
-      [[-0.22, 0], [0.22, 0]].forEach(([x, z]) => {
-        const leg = mesh(new THREE.CapsuleGeometry(0.16, 0.45, 6, 10), Mat.legs);
-        leg.position.set(x, -0.35, z);
-        legsG.add(leg);
-        const boot = mesh(new THREE.BoxGeometry(0.28, 0.2, 0.38), Mat.boot);
-        boot.position.set(x, -0.65, z);
-        legsG.add(boot);
-      });
-      legsG.position.y = -1.15;
-      g.add(legsG);
-      g.userData.legs = legsG;
-      return g;
-    }
-
-    // ─── Физика (простая кинематика + ragdoll) ──────────────
-    class Body3D {
-      constructor(x, y, z = 0) {
-        this.pos = new THREE.Vector3(x, y, z);
-        this.vel = new THREE.Vector3();
-        this.rot = 0;
-        this.rotV = 0;
-        this.radius = 0.5;
-        this.grounded = false;
-      }
-      step(dt) {
-        this.vel.y += CFG.gravity * dt;
-        this.pos.addScaledVector(this.vel, dt);
-        this.rot += this.rotV * dt;
-        this.rotV *= 0.99;
-        if (this.pos.y < this.radius) {
-          this.pos.y = this.radius;
-          if (this.vel.y < 0) {
-            this.vel.y *= -0.35;
-            this.vel.x *= 0.92;
-            this.grounded = Math.abs(this.vel.y) < 1;
-          }
-        }
-      }
-    }
-
-    class Ragdoll {
-      constructor(x, y) {
-        this.head = new Body3D(x, y + 0.9);
-        this.head.radius = 0.42;
-        this.torso = new Body3D(x, y);
-        this.torso.radius = 0.45;
-        this.legs = new Body3D(x, y - 0.9);
-        this.legs.radius = 0.4;
-        this.mesh = buildGrannyMesh();
-        this.mesh.visible = false;
-        scene.add(this.mesh);
-        this.parts = [this.head, this.torso, this.legs];
-      }
-      launch(vx, vy) {
-        this.mesh.visible = true;
-        this.parts.forEach(p => { p.vel.set(vx, vy, 0); p.grounded = false; });
-      }
-      step(dt) {
-        this.parts.forEach(p => p.step(dt));
-        // constraints (упрощённые пружины)
-        this.constrain(this.head, this.torso, 0.85, dt);
-        this.constrain(this.torso, this.legs, 0.85, dt);
-        // sync mesh
-        const h = this.mesh.userData.head;
-        const t = this.mesh.userData.torso;
-        const l = this.mesh.userData.legs;
-        this.mesh.position.copy(this.torso.pos);
-        h.position.set(this.head.pos.x - this.torso.pos.x, this.head.pos.y - this.torso.pos.y + 0.75, 0);
-        h.rotation.z = this.head.rot;
-        t.rotation.z = this.torso.rot;
-        l.position.set(this.legs.pos.x - this.torso.pos.x, this.legs.pos.y - this.torso.pos.y - 0.15, 0);
-        l.rotation.z = this.legs.rot;
-        this.mesh.rotation.y = 0;
-      }
-      constrain(a, b, dist, dt) {
-        const dx = a.pos.x - b.pos.x, dy = a.pos.y - b.pos.y;
-        const d = Math.hypot(dx, dy) || 0.01;
-        const f = (d - dist) * 28 * dt;
-        const nx = dx / d, ny = dy / d;
-        a.vel.x -= nx * f; a.vel.y -= ny * f;
-        b.vel.x += nx * f; b.vel.y += ny * f;
-        a.rotV += (b.rot - a.rot) * 2 * dt;
-        b.rotV += (a.rot - b.rot) * 2 * dt;
-      }
-      boost(fx, fy) {
-        this.parts.forEach((p, i) => {
-          const k = i === 2 ? 1.2 : 1;
-          p.vel.x += fx * k; p.vel.y += fy * k;
-        });
-      }
-      speed() {
-        return this.parts.reduce((s, p) => s + p.vel.length(), 0) / 3;
-      }
-      dispose() { scene.remove(this.mesh); }
-    }
-
-    // ─── Объекты мира ───────────────────────────────────────
-    const props = [];
-    function addTramp(x) {
-      const g = new THREE.Group();
-      g.add(mesh(new THREE.BoxGeometry(3.5, 0.25, 2), Mat.tramp));
-      const frame = mesh(new THREE.BoxGeometry(3.8, 0.15, 2.2), Mat.metal);
-      frame.position.y = -0.3;
-      g.add(frame);
-      g.position.set(x, 0.35, 0);
-      scene.add(g);
-      props.push({ kind: 'tramp', x, mesh: g, r: 2 });
-    }
-    function addFan(x) {
-      const g = new THREE.Group();
-      const box = mesh(new THREE.BoxGeometry(1.8, 1.8, 0.6), Mat.fan);
-      g.add(box);
-      const blades = new THREE.Group();
-      for (let i = 0; i < 4; i++) {
-        const b = mesh(new THREE.BoxGeometry(1.4, 0.15, 0.4), new THREE.MeshStandardMaterial({ color: 0xeceff1 }));
-        b.rotation.z = i * Math.PI / 2;
-        blades.add(b);
-      }
-      g.add(blades);
-      g.userData.blades = blades;
-      g.position.set(x, 2.5, 0);
-      scene.add(g);
-      props.push({ kind: 'fan', x, mesh: g, blades });
-    }
-    function addCoin(x, y) {
-      const c = mesh(new THREE.CylinderGeometry(0.35, 0.35, 0.08, 20), Mat.coin);
-      c.rotation.x = Math.PI / 2;
-      c.position.set(x, y || 1.5 + Math.random() * 4, 0);
-      scene.add(c);
-      props.push({ kind: 'coin', x, y: c.position.y, mesh: c, taken: false });
-    }
-    function buildWorld() {
-      let x = 25;
-      while (x < CFG.worldLen - 30) {
-        const r = Math.random();
-        if (r < 0.2) addTramp(x);
-        else if (r < 0.35) addFan(x);
-        else if (r < 0.65) { const n = 2 + (Math.random() * 3 | 0); for (let i = 0; i < n; i++) addCoin(x + i * 1.8); }
-        else addCoin(x);
-        x += 12 + Math.random() * 14;
-      }
-    }
-    buildWorld();
-
-    // ─── Игра ───────────────────────────────────────────────
-    let phase = 'menu';
-    let granny = null;
-    let coinCount = 0;
-    let fartUsed = false;
-    let stall = 0;
-    let flyT = 0;
-    let dragging = false;
-    let pull = 0, pullAng = 0;
-    let aimLine = null;
-    let trampCd = new Set();
-
-    const slingGeo = new THREE.BufferGeometry();
-    const slingMat = new THREE.LineBasicMaterial({ color: 0xff6f00, linewidth: 3 });
-    const slingLine = new THREE.Line(slingGeo, slingMat);
-    slingLine.visible = false;
-    scene.add(slingLine);
-
-    function muzzlePos() {
-      const a = cannon.rotation.z;
-      const ox = CFG.cannonX, oy = 1.6;
-      return new THREE.Vector3(ox + Math.cos(a) * 4.6, oy + Math.sin(a) * 4.6, 0);
-    }
-
-    function clearAim() {
-      slingLine.visible = false;
-      dragging = false;
-    }
-
-    function getNDC(e) {
-      const r = renderer.domElement.getBoundingClientRect();
-      const cx = (e.clientX ?? e.touches?.[0]?.clientX) - r.left;
-      const cy = (e.clientY ?? e.touches?.[0]?.clientY) - r.top;
-      return {
-        x: (cx / r.width) * 2 - 1,
-        y: -(cy / r.height) * 2 + 1,
-        sx: cx, sy: cy
-      };
-    }
-
-  const raycaster = new THREE.Raycaster();
-    const aimPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0); // плоскость XY (вид сбоку)
-    const hitPt = new THREE.Vector3();
-
-    function screenToWorld(sx, sy) {
-      const ndc = getNDC({ clientX: sx, clientY: sy });
-      raycaster.setFromCamera(new THREE.Vector2(ndc.x, ndc.y), camera);
-      raycaster.ray.intersectPlane(aimPlane, hitPt);
-      return hitPt.clone();
-    }
-
-    function fire() {
-      phase = 'fly';
-      clearAim();
-      fartUsed = false;
-      stall = 0;
-      flyT = performance.now();
-      document.getElementById('fart-btn').style.display = 'block';
-
-      const m = muzzlePos();
-      const spd = CFG.minSpd + pull * (CFG.maxSpd - CFG.minSpd);
-      const vx = Math.cos(pullAng) * spd;
-      const vy = Math.sin(pullAng) * spd;
-
-      granny = new Ragdoll(m.x, m.y);
-      granny.launch(vx, vy);
-
-      // вспышка
-      const flash = mesh(new THREE.SphereGeometry(0.5, 12, 12), new THREE.MeshBasicMaterial({ color: 0xffee58 }));
-      flash.position.copy(m);
-      scene.add(flash);
-      setTimeout(() => scene.remove(flash), 120);
-    }
-
-    function fart() {
-      if (phase !== 'fly' || fartUsed || !granny) return;
-      fartUsed = true;
-      document.getElementById('fart-btn').style.display = 'none';
-      const t = granny.torso.vel;
-      const sp = t.length() || 1;
-      granny.boost((t.x / sp) * 10, (t.y / sp) * 10 + 2);
-      for (let i = 0; i < 4; i++) {
-        const s = mesh(new THREE.SphereGeometry(0.25, 8, 8), new THREE.MeshStandardMaterial({ color: 0xa5d6a7, transparent: true, opacity: 0.7 }), false);
-        s.position.copy(granny.legs.pos);
-        scene.add(s);
-        setTimeout(() => scene.remove(s), 400);
-      }
-    }
-
-    function checkProps() {
-      if (!granny) return;
-      const px = granny.torso.pos.x, py = granny.torso.pos.y;
-      props.forEach(p => {
-        if (p.kind === 'coin' && !p.taken && Math.hypot(px - p.x, py - p.y) < 1.2) {
-          p.taken = true;
-          scene.remove(p.mesh);
-          coinCount += 10;
-          document.getElementById('coins').textContent = '🪙 ' + coinCount;
-        }
-        if (p.kind === 'tramp' && Math.abs(px - p.x) < 2 && py < 2.5 && granny.torso.vel.y < 0 && !trampCd.has(p.x)) {
-          trampCd.add(p.x);
-          setTimeout(() => trampCd.delete(p.x), 400);
-          granny.parts.forEach(b => { b.vel.y = 14; b.vel.x *= 1.05; });
-          p.mesh.scale.y = 0.6;
-          setTimeout(() => p.mesh.scale.y = 1, 150);
-        }
-        if (p.kind === 'fan' && Math.abs(px - p.x) < 2.5 && Math.abs(py - p.mesh.position.y) < 2.5) {
-          granny.parts.forEach(b => { b.vel.x += 0.25; b.vel.y += 0.35; });
-        }
-      });
-    }
-
-    function distM() {
-      return granny ? Math.max(0, (granny.torso.pos.x - CFG.cannonX) / 2) | 0 : 0;
-    }
-
-    function endRun() {
-      if (phase === 'end') return;
-      phase = 'end';
-      document.getElementById('fart-btn').style.display = 'none';
-      document.getElementById('hud').classList.add('hide');
-      document.getElementById('hint').classList.add('hide');
-
-      const d = distM();
-      const old = parseInt(localStorage.getItem(STORE) || '0');
-      if (d > old) localStorage.setItem(STORE, String(d));
-      document.getElementById('rec-val').textContent = Math.max(d, old);
-
-      document.getElementById('res-dist').textContent = d + ' м' + (d > old ? ' 🏆' : '');
-      document.getElementById('res-coins').textContent = 'Монеты: ' + coinCount;
-      document.getElementById('res-phrase').textContent = PHRASES[Math.random() * PHRASES.length | 0];
-      document.getElementById('results').classList.remove('hide');
-    }
-
-    function resetGame() {
-      if (granny) { granny.dispose(); granny = null; }
-      coinCount = 0;
-      trampCd.clear();
-      props.forEach(p => {
-        if (p.kind === 'coin' && p.taken) {
-          p.taken = false;
-          p.mesh.rotation.set(Math.PI / 2, 0, 0);
-          p.mesh.position.set(p.x, p.y, 0);
-          scene.add(p.mesh);
-        }
-      });
-      cannon.rotation.z = Math.PI / 4;
-      camera.position.set(-12, 14, 22);
-      document.getElementById('coins').textContent = '🪙 0';
-      document.getElementById('dist').textContent = '0 м';
-      document.getElementById('results').classList.add('hide');
-      document.getElementById('hud').classList.remove('hide');
-      document.getElementById('hint').classList.remove('hide');
-      document.getElementById('hint').style.opacity = '0.9';
-      phase = 'aim';
-    }
-
-    // ─── Ввод ───────────────────────────────────────────────
-    function onDown(e) {
-      e.preventDefault();
-      if (phase === 'fly') { fart(); return; }
-      if (phase !== 'aim') return;
-      dragging = true;
-      document.getElementById('hint').style.opacity = '0.4';
-      onMove(e);
-    }
-    function onMove(e) {
-      if (!dragging || phase !== 'aim') return;
-      e.preventDefault();
-      const r = renderer.domElement.getBoundingClientRect();
-      const ndc = getNDC(e);
-      raycaster.setFromCamera(new THREE.Vector2(ndc.x, ndc.y), camera);
-      raycaster.ray.intersectPlane(aimPlane, hitPt);
-
-      const m = muzzlePos();
-      let dx = m.x - hitPt.x, dy = m.y - hitPt.y;
-      let dist = Math.min(Math.hypot(dx, dy), CFG.maxPull);
-      if (dist < 0.5) { pull = 0; slingLine.visible = false; return; }
-      pullAng = Math.atan2(dy, dx);
-      pull = dist / CFG.maxPull;
-      cannon.rotation.z = pullAng;
-
-      const ex = m.x + Math.cos(pullAng) * dist;
-      const ey = m.y + Math.sin(pullAng) * dist;
-      slingGeo.setFromPoints([m, new THREE.Vector3(ex, ey, 0)]);
-      slingLine.visible = true;
-    }
-    function onUp(e) {
-      if (!dragging || phase !== 'aim') return;
-      dragging = false;
-      if (pull < 0.05) { clearAim(); return; }
-      fire();
-    }
-
-    renderer.domElement.addEventListener('pointerdown', onDown);
-    renderer.domElement.addEventListener('pointermove', onMove);
-    renderer.domElement.addEventListener('pointerup', onUp);
-    renderer.domElement.addEventListener('pointercancel', onUp);
-    document.getElementById('fart-btn').addEventListener('click', e => { e.stopPropagation(); fart(); });
-
-    document.getElementById('play-btn').onclick = () => {
-      document.getElementById('menu').classList.add('hide');
-      resetGame();
-    };
-    document.getElementById('again-btn').onclick = () => { resetGame(); };
-    document.getElementById('menu-btn').onclick = () => {
-      document.getElementById('results').classList.add('hide');
-      document.getElementById('hud').classList.add('hide');
-      document.getElementById('hint').classList.add('hide');
-      document.getElementById('menu').classList.remove('hide');
-      phase = 'menu';
-      if (granny) { granny.dispose(); granny = null; }
-    };
-
-    document.getElementById('rec-val').textContent = localStorage.getItem(STORE) || '0';
-    cannon.rotation.z = Math.PI / 4;
-
-    // ─── Цикл ───────────────────────────────────────────────
-    let lastT = performance.now();
-    function animate(now) {
-      requestAnimationFrame(animate);
-      const dt = Math.min((now - lastT) / 1000, 0.033);
-      lastT = now;
-
-      props.forEach(p => {
-        if (p.kind === 'fan' && p.blades) p.blades.rotation.z += dt * 8;
-        if (p.kind === 'coin' && !p.taken) p.mesh.rotation.y += dt * 3;
-      });
-
-      if (phase === 'fly' && granny) {
-        granny.step(dt);
-        checkProps();
-        document.getElementById('dist').textContent = distM() + ' м';
-
-        const tx = granny.torso.pos.x;
-        const ty = granny.torso.pos.y;
-        if (tx > CFG.worldLen - 20 || ty < -10) { endRun(); }
-
-        const grounded = granny.parts.some(p => p.grounded);
-        if (grounded && granny.speed() < 1.5 && now - flyT > 400) {
-          stall += dt * 1000;
-          if (stall > 700) endRun();
-        } else if (granny.speed() > 3) stall = 0;
-
-        camera.position.x += (tx - 18 - camera.position.x) * 0.07;
-        camera.position.y += (8 - camera.position.y) * 0.03;
-        camera.lookAt(tx + 10, 4, 0);
-      }
-
-      renderer.render(scene, camera);
-    }
-    animate(performance.now());
-
-    window.addEventListener('resize', () => {
-      camera.aspect = window.innerWidth / window.innerHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth, window.innerHeight);
     });
-  </script>
+    this.mkBack();
+  }
+  mkBack(){
+    const b=this.add.text(W/2,H-60,'← Назад',{fontSize:'24px',color:'#fff',backgroundColor:'#34495E',padding:{x:20,y:10}}).setOrigin(.5).setInteractive();
+    b.on('pointerdown',()=>this.scene.start('Menu'));
+  }
+}
+
+// ─── Игра ─────────────────────────────────────────────────────
+class Game extends Phaser.Scene{
+  constructor(){super('Game');}
+  init(data){this.lvId=data.level||1;this.lv=LEVELS.find(l=>l.id===this.lvId)||LEVELS[0];}
+
+  create(){
+    this.phase='aim';
+    this.drag=false;this.pull=0;this.pullAng=0;
+    this.coins=0;this.fartUsed=false;this.groundHit=false;this.stall=0;
+    this.flyT=0;this.cd=new Set();this.granny=null;
+    this.theme=THEMES[this.lv.theme];
+
+    this.buildWorld();
+    this.cannon=this.add.image(CX,CY,'cannon').setOrigin(.42,.88).setDepth(30);
+    this.sling=this.add.graphics().setDepth(35);
+
+    this.cameras.main.setBounds(0,0,WORLD_W,H);
+    this.cameras.main.scrollX=0;
+
+    this.hudGoal=this.add.text(W/2,18,`🎯 ${this.lv.goal} м`,{fontSize:'24px',color:'#fff',stroke:'#000',strokeThickness:4}).setOrigin(.5).setScrollFactor(0).setDepth(100);
+    this.hudDist=this.add.text(16,56,'0 м',{fontSize:'26px',color:'#fff',stroke:'#000',strokeThickness:4}).setScrollFactor(0).setDepth(100);
+    this.hudCoin=this.add.text(16,92,'🪙 0',{fontSize:'24px',color:'#FFEB3B',stroke:'#000',strokeThickness:4}).setScrollFactor(0).setDepth(100);
+    this.hudLv=this.add.text(W-16,18,`${this.lv.id}. ${this.lv.name}`,{fontSize:'20px',color:'#fff',stroke:'#000',strokeThickness:3}).setOrigin(1,0).setScrollFactor(0).setDepth(100);
+    this.hint=this.add.text(W/2,H-90,'👇 Тяни вниз и отпусти!',{fontSize:'22px',color:'#fff',stroke:'#000',strokeThickness:3}).setOrigin(.5).setScrollFactor(0).setDepth(100);
+
+    this.btnFart=this.add.text(W-20,H-100,'💨',{fontSize:'48px'}).setOrigin(1,.5).setScrollFactor(0).setDepth(100).setInteractive().setVisible(false);
+    this.btnFart.on('pointerdown',(p,...a)=>{if(a[2])a[2].stopPropagation();this.fart();});
+
+    this.input.on('pointerdown',this.pDown,this);
+    this.input.on('pointermove',this.pMove,this);
+    this.input.on('pointerup',this.pUp,this);
+    this.matter.world.on('collisionstart',this.onHit,this);
+  }
+
+  buildWorld(){
+    const t=this.theme;
+    const sky=this.add.graphics().setDepth(0);
+    sky.fillGradientStyle(t.sky1,t.sky1,t.sky2,t.sky2,1);sky.fillRect(0,0,WORLD_W,GY+60);
+    for(let i=0;i<25;i++)this.add.image(200+i*320,60+(i%4)*40,'cloud').setDepth(1).setAlpha(.6).setScale(.7+(i%3)*.2);
+    const hills=this.add.graphics().setDepth(2);
+    hills.fillStyle(t.hill,1);
+    for(let x=0;x<WORLD_W+200;x+=150){const h=40+Math.sin(x*.01)*25;hills.fillTriangle(x,GY-20,x+75,GY-20-h,x+150,GY-20);}
+    hills.fillStyle(t.hill2,1);
+    for(let x=75;x<WORLD_W+200;x+=150){const h=25+Math.cos(x*.008)*18;hills.fillTriangle(x,GY-10,x+75,GY-10-h,x+150,GY-10);}
+    const grd=this.add.graphics().setDepth(5);
+    grd.fillStyle(t.dirt);grd.fillRect(0,GY+4,WORLD_W,60);
+    grd.fillStyle(t.ground);grd.fillRect(0,GY-6,WORLD_W,12);
+    if(this.lv.theme==='space')for(let i=0;i<80;i++){const s=this.add.circle(Math.random()*WORLD_W,Math.random()*600,Math.random()*2+1,0xFFF,Math.random()*.5+.3);s.setDepth(1);}
+
+    this.matter.add.rectangle(WORLD_W/2,GY+18,WORLD_W,44,{isStatic:true,label:'ground',friction:.9,restitution:.05});
+    this.props=[];this.crows=[];
+    this.placeObjects();
+  }
+
+  placeObjects(){
+    const lv=this.lv;
+    const endX=lv.goal*10+800;
+    let x=400,ci=0;
+    const slots=[];
+    while(x<endX){
+      slots.push(x);
+      x+=Phaser.Math.Between(350,500);
+    }
+    Phaser.Utils.Array.Shuffle(slots);
+    let ti=0,fi=0,cri=0,coi=0;
+    for(const sx of slots){
+      if(ti<lv.tramps){this.addProp('tramp',sx);ti++;continue;}
+      if(fi<lv.fans){this.addProp('fan',sx);fi++;continue;}
+      if(cri<lv.crows){this.addProp('crow',sx);cri++;continue;}
+      if(coi<lv.coins){this.addProp('coin',sx+Phaser.Math.Between(-40,40));coi++;}
+    }
+    while(coi<lv.coins){this.addProp('coin',400+coi*120);coi++;}
+  }
+
+  addProp(kind,x){
+    if(kind==='tramp'){
+      const y=GY-8,b=this.matter.add.rectangle(x,y,80,12,{isStatic:true,label:'tramp',restitution:1.1});
+      const s=this.add.image(x,y,'tramp').setDepth(15);
+      this.props.push({kind,body:b,spr:s});
+    }else if(kind==='fan'){
+      const y=GY-85,b=this.matter.add.rectangle(x,y,50,50,{isStatic:true,label:'fan'});
+      const s=this.add.image(x,y,'fan').setDepth(15);
+      this.props.push({kind,body:b,spr:s,x,y});
+    }else if(kind==='crow'){
+      const y=700,b=this.matter.add.circle(x,y,14,{isStatic:true,label:'crow'});
+      const s=this.add.image(x,y,'crow').setDepth(18);
+      this.crows.push({b,s,x,t0:this.time.now});
+      this.props.push({kind,body:b,spr:s});
+    }else{
+      const y=Phaser.Math.Between(GY-220,GY-60);
+      const b=this.matter.add.circle(x,y,14,{isStatic:true,isSensor:true,label:'coin'});
+      const s=this.add.image(x,y,'coin').setDepth(16);
+      this.tweens.add({targets:s,y:y-8,duration:600,yoyo:true,repeat:-1});
+      this.props.push({kind,body:b,spr:s,got:false});
+    }
+  }
+
+  muzzle(){
+    const a=Phaser.Math.DegToRad(this.cannon.angle-90);
+    return{x:CX+Math.cos(a)*BARREL,y:CY+Math.sin(a)*BARREL};
+  }
+  wpos(p){return{x:p.x+this.cameras.main.scrollX,y:p.y+this.cameras.main.scrollY};}
+
+  spawnGranny(x,y){
+    const o={friction:.12,frictionAir:.02,restitution:.32};
+    const head=this.matter.add.circle(x,y-26,16,{mass:.8,label:'gH',...o});
+    const torso=this.matter.add.rectangle(x,y+2,22,34,{mass:1.5,label:'gT',...o});
+    const legs=this.matter.add.rectangle(x,y+30,26,20,{mass:1.7,label:'gL',...o});
+    this.matter.add.constraint(head,torso,3,.9,{stiffness:.7,damping:.05});
+    this.matter.add.constraint(torso,legs,3,.9,{stiffness:.7,damping:.05});
+    const sH=this.add.image(x,y,'granny').setDepth(50).setScale(1.1);
+    const sT=this.add.image(x,y,'granny').setDepth(49).setScale(.95).setAlpha(.95);
+    const sL=this.add.image(x,y,'granny').setDepth(48).setScale(.85);
+    this.matter.add.gameObject(sH,head);
+    this.matter.add.gameObject(sT,torso);
+    this.matter.add.gameObject(sL,legs);
+    return{head,torso,legs,sH,sT,sL};
+  }
+
+  parts(g){return g?[g.head,g.torso,g.legs]:[];}
+
+  pDown(p){
+    if(this.phase==='end')return;
+    if(this.phase==='fly'){this.fart();return;}
+    this.drag=true;this.hint.setVisible(false);this.pMove(p);
+  }
+  pMove(p){
+    if(!this.drag||this.phase!=='aim')return;
+    const w=this.wpos(p),m=this.muzzle();
+    let dx=m.x-w.x,dy=m.y-w.y,d=Math.min(Math.hypot(dx,dy),MAX_PULL);
+    if(d<10){this.pull=0;this.sling.clear();return;}
+    const ang=Math.atan2(dy,dx);
+    this.pullAng=ang;this.pull=d/MAX_PULL;
+    this.cannon.setAngle(Phaser.Math.RadToDeg(ang)+90);
+    const g=this.sling;g.clear();
+    g.lineStyle(5,0xFF6F00,1);g.lineBetween(m.x,m.y,m.x+Math.cos(ang)*d,m.y+Math.sin(ang)*d);
+    g.fillStyle(0xFF6F00);g.fillCircle(m.x+Math.cos(ang)*d,m.y+Math.sin(ang)*d,10);
+    g.fillStyle(0x000,.4);g.fillRoundedRect(CX-65,CY-55,130,14,6);
+    const c=this.pull<.5?0x2ECC71:this.pull<.8?0xF1C40F:0xE74C3C;
+    g.fillStyle(c);g.fillRoundedRect(CX-65,CY-55,130*this.pull,14,6);
+  }
+  pUp(){
+    if(!this.drag||this.phase!=='aim')return;
+    this.drag=false;
+    if(this.pull<.06){this.sling.clear();return;}
+    this.fire();
+  }
+
+  fire(){
+    this.phase='fly';this.sling.clear();this.groundHit=false;this.stall=0;
+    this.flyT=this.time.now;this.fartUsed=false;
+    const m=this.muzzle(),spd=20+this.pull*28;
+    const vx=Math.cos(this.pullAng)*spd,vy=Math.sin(this.pullAng)*spd;
+    this.granny=this.spawnGranny(m.x,m.y);
+    this.parts(this.granny).forEach(b=>this.matter.body.setVelocity(b,{x:vx,y:vy}));
+    this.cameras.main.shake(80,.004);
+    this.cameras.main.startFollow(this.granny.sT,true,.1,.1,0,-80);
+    this.btnFart.setVisible(true);
+    const fl=this.add.circle(m.x,m.y,16,0xFFEE58,.9).setDepth(60);
+    this.tweens.add({targets:fl,alpha:0,scale:2,duration:120,onComplete:()=>fl.destroy()});
+    this.emitter=this.add.particles(0,0,'coin',{
+      speed:{min:40,max:100},scale:{start:.15,end:0},lifespan:300,quantity:8,tint:0xFFEE58,emitting:false
+    });
+    this.emitter.explode(8,m.x,m.y);
+  }
+
+  fart(){
+    if(this.phase!=='fly'||this.fartUsed||!this.granny)return;
+    this.fartUsed=true;this.btnFart.setVisible(false);
+    const t=this.granny.torso,sp=Math.hypot(t.velocity.x,t.velocity.y)||1;
+    const bx=t.velocity.x/sp*12,by=t.velocity.y/sp*12;
+    this.parts(this.granny).forEach((b,i)=>{
+      const k=i===2?1.2:1;
+      this.matter.body.setVelocity(b,{x:b.velocity.x+bx*k,y:b.velocity.y+by*k-1});
+    });
+    const p=this.granny.legs.position;
+    for(let i=0;i<4;i++){
+      const c=this.add.circle(p.x,p.y,10,0xA5D6A7,.7).setDepth(55);
+      this.tweens.add({targets:c,scale:2.5,alpha:0,duration:350,delay:i*40,onComplete:()=>c.destroy()});
+    }
+  }
+
+  onHit(ev){
+    if(!this.granny)return;
+    ev.pairs.forEach(({bodyA,bodyB})=>{
+      const la=bodyA.label,lb=bodyB.label;
+      const gp=(la&&la[0]==='g')?bodyA:(lb&&lb[0]==='g')?bodyB:null;
+      if(!gp)return;
+      const ob=gp===bodyA?bodyB:bodyA,id=ob.id+ob.label;
+      if(la==='ground'||lb==='ground')this.groundHit=true;
+      if((la==='tramp'||lb==='tramp')&&!this.cd.has(id)){
+        this.cd.add(id);this.time.delayedCall(300,()=>this.cd.delete(id));
+        this.parts(this.granny).forEach(b=>this.matter.body.setVelocity(b,{x:b.velocity.x*1.05,y:-14}));
+        const pr=this.props.find(p=>p.body===ob);
+        if(pr)this.tweens.add({targets:pr.spr,scaleY:.6,duration:80,yoyo:true});
+      }
+      if((la==='fan'||lb==='fan')&&!this.cd.has(id)){
+        this.cd.add(id);this.time.delayedCall(200,()=>this.cd.delete(id));
+        this.parts(this.granny).forEach(b=>this.matter.body.setVelocity(b,{x:b.velocity.x+5,y:b.velocity.y-6}));
+      }
+      if((la==='crow'||lb==='crow')&&!this.cd.has(id)){
+        this.cd.add(id);this.time.delayedCall(400,()=>this.cd.delete(id));
+        const a=Math.random()*6.28;
+        this.parts(this.granny).forEach(b=>this.matter.body.setVelocity(b,{x:b.velocity.x+Math.cos(a)*5,y:b.velocity.y+Math.sin(a)*5}));
+      }
+      if(la==='coin'||lb==='coin'){
+        const cb=la==='coin'?bodyA:bodyB;
+        const pr=this.props.find(p=>p.kind==='coin'&&p.body===cb&&!p.got);
+        if(pr&&!this.cd.has(id)){
+          this.cd.add(id);pr.got=true;this.coins+=10;
+          this.hudCoin.setText('🪙 '+this.coins);
+          this.tweens.add({targets:pr.spr,scale:1.5,alpha:0,duration:200,onComplete:()=>{pr.spr.destroy();this.matter.world.remove(pr.body);}});
+          const pop=this.add.text(pr.spr.x,pr.spr.y-20,'+10',{fontSize:'22px',color:'#FFEB3B',stroke:'#000',strokeThickness:3}).setOrigin(.5).setDepth(60);
+          this.tweens.add({targets:pop,y:pop.y-50,alpha:0,duration:500,onComplete:()=>pop.destroy()});
+        }
+      }
+    });
+  }
+
+  distM(){return this.granny?Math.max(0,((this.granny.torso.position.x-CX)/10)|0):0;}
+
+  win(stars){
+    this.phase='end';this.matter.world.pause();this.cameras.main.stopFollow();
+    this.btnFart.setVisible(false);
+    this.matter.world.off('collisionstart',this.onHit,this);
+    const save=loadSave();
+    if(this.lv.id+1>save.unlocked&&this.lv.id<LEVELS.length)save.unlocked=this.lv.id+1;
+    const prev=save.stars[this.lv.id]||0;
+    if(stars>prev)save.stars[this.lv.id]=stars;
+    writeSave(save);
+
+    const cx=W/2;
+    this.add.rectangle(cx,H/2,W,H,0x000,.75).setScrollFactor(0).setDepth(200);
+    this.add.text(cx,H/2-220,'🎉 УРОВЕНЬ ПРОЙДЕН!',{fontSize:'34px',color:'#F1C40F',fontStyle:'bold'}).setOrigin(.5).setScrollFactor(0).setDepth(201);
+    let st='';for(let i=0;i<3;i++)st+=i<stars?'⭐':'☆';
+    this.add.text(cx,H/2-150,st,{fontSize:'40px'}).setOrigin(.5).setScrollFactor(0).setDepth(201);
+    this.add.text(cx,H/2-90,`Дальность: ${this.distM()} м (цель ${this.lv.goal})`,{fontSize:'24px',color:'#fff'}).setOrigin(.5).setScrollFactor(0).setDepth(201);
+    this.add.text(cx,H/2-50,`Монеты: ${this.coins}`,{fontSize:'22px',color:'#FFEB3B'}).setOrigin(.5).setScrollFactor(0).setDepth(201);
+    this.mkBtn(cx,H/2+30,'Следующий',0x2ECC71,()=>{
+      if(this.lv.id<LEVELS.length)this.scene.start('Game',{level:this.lv.id+1});
+      else this.scene.start('Levels');
+    });
+    this.mkBtn(cx,H/2+110,'Уровни',0x3498DB,()=>this.scene.start('Levels'));
+    this.mkBtn(cx,H/2+190,'Меню',0x95A5A6,()=>this.scene.start('Menu'));
+  }
+
+  lose(){
+    this.phase='end';this.matter.world.pause();this.cameras.main.stopFollow();
+    this.btnFart.setVisible(false);
+    this.matter.world.off('collisionstart',this.onHit,this);
+    const cx=W/2;
+    this.add.rectangle(cx,H/2,W,H,0x000,.75).setScrollFactor(0).setDepth(200);
+    this.add.text(cx,H/2-120,'Не долетела...',{fontSize:'36px',color:'#E74C3C',fontStyle:'bold'}).setOrigin(.5).setScrollFactor(0).setDepth(201);
+    this.add.text(cx,H/2-60,`${this.distM()} / ${this.lv.goal} м`,{fontSize:'28px',color:'#fff'}).setOrigin(.5).setScrollFactor(0).setDepth(201);
+    this.mkBtn(cx,H/2+20,'Заново',0xE67E22,()=>this.scene.start('Game',{level:this.lv.id}));
+    this.mkBtn(cx,H/2+100,'Уровни',0x3498DB,()=>this.scene.start('Levels'));
+  }
+
+  mkBtn(x,y,t,col,fn){
+    const r=this.add.rectangle(x,y,260,58,col).setScrollFactor(0).setDepth(201).setInteractive();
+    this.add.text(x,y,t,{fontSize:'24px',color:'#fff',fontStyle:'bold'}).setOrigin(.5).setScrollFactor(0).setDepth(202);
+    r.on('pointerdown',fn);
+  }
+
+  update(time){
+    this.crows.forEach(c=>{
+      const ny=700+Math.sin((time-c.t0)/350)*42;
+      this.matter.body.setPosition(c.b,{x:c.x,y:ny});c.s.setPosition(c.x,ny);
+    });
+    this.props.filter(p=>p.kind==='fan').forEach(p=>p.spr.setAngle(time/25));
+
+    if(this.granny){
+      this.hudDist.setText(this.distM()+' м');
+      if(this.phase==='fly'){
+        const d=this.distM();
+        if(d>=this.lv.goal){
+          let stars=1;
+          if(d>=this.lv.goal*1.15)stars=2;
+          if(d>=this.lv.goal*1.3&&this.coins>=this.lv.coins*6)stars=3;
+          this.win(stars);return;
+        }
+        const tx=this.granny.torso.position.x,ty=this.granny.torso.position.y;
+        if(tx>WORLD_W-200||ty<-200){this.lose();return;}
+        if(this.groundHit){
+          const avg=this.parts(this.granny).reduce((s,b)=>s+Math.hypot(b.velocity.x,b.velocity.y),0)/3;
+          if(avg<.4&&time-this.flyT>500){this.stall+=this.game.loop.delta;if(this.stall>800)this.lose();}
+          else if(avg>1.2)this.stall=0;
+          if(ty<GY-40&&this.granny.torso.velocity.y<0){this.groundHit=false;this.stall=0;}
+        }
+      }
+    }
+    this.cameras.main.scrollX=Phaser.Math.Clamp(this.cameras.main.scrollX,0,WORLD_W-W);
+  }
+}
+
+// ─── Запуск ───────────────────────────────────────────────────
+new Phaser.Game({
+  type:Phaser.AUTO,width:W,height:H,parent:'game',
+  backgroundColor:'#5DADE2',
+  scale:{mode:Phaser.Scale.FIT,autoCenter:Phaser.Scale.CENTER_BOTH},
+  physics:{default:'matter',matter:{gravity:{y:1.1},enableSleeping:false}},
+  scene:[Boot,Menu,Levels,Game]
+});
+</script>
 </body>
 </html>
